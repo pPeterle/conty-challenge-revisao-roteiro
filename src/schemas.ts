@@ -10,6 +10,8 @@ import { parseDataCivil } from "./prazo.ts";
 // Espaços, quebras e caracteres de formatação invisíveis (zero-width space, BOM etc.).
 const INVISIVEIS = /[\s\p{Cf}]/gu;
 const temConteudoVisivel = (texto: string) => texto.replace(INVISIVEIS, "") !== "";
+// Caracteres de controle (NUL e companhia) não têm o que fazer num roteiro; tab e quebras de linha podem.
+const CONTROLE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 
 function textoObrigatorio(campo: string, max: number) {
   return z
@@ -17,7 +19,11 @@ function textoObrigatorio(campo: string, max: number) {
     .trim()
     .min(1, `Informe o campo "${campo}".`)
     .max(max, `O campo "${campo}" pode ter no máximo ${max} caracteres.`)
-    .refine(temConteudoVisivel, { message: `Informe o campo "${campo}".`, params: { vazio: true } });
+    .refine(temConteudoVisivel, { message: `Informe o campo "${campo}".`, params: { vazio: true } })
+    .refine((t) => !CONTROLE.test(t), {
+      message: `O campo "${campo}" tem caracteres de controle (como NUL), que não são aceitos.`,
+      params: { codigo: "CARACTERE_INVALIDO" },
+    });
 }
 
 const versaoOpcional = z
@@ -87,6 +93,7 @@ export function codigoDoProblema(problema: ZodIssue, alvo: keyof ValidationTarge
   if (alvo === "header") return "CHAVE_IDEMPOTENCIA_INVALIDA";
   const campo = problema.path[0];
   if (campo === undefined) return "JSON_INVALIDO";
+  if (problema.code === "custom" && typeof problema.params?.codigo === "string") return problema.params.codigo;
   const ausente =
     problema.code === "invalid_type" && (problema.received === "undefined" || problema.received === "null");
   const vazio = problema.code === "too_small" || (problema.code === "custom" && problema.params?.vazio === true);

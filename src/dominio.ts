@@ -20,13 +20,20 @@ const ACOES_POR_ESTADO: Record<EstadoRoteiro, Acao[]> = {
   aprovado: [],
 };
 
-export function acoesPermitidas(estado: EstadoRoteiro): Acao[] {
+/**
+ * Pedido de alteração vencido não vale mais: a marca volta a poder aprovar a versão
+ * atual ou fazer um pedido novo, que substitui o vencido. O criador continua podendo reenviar.
+ */
+const ACOES_COM_PEDIDO_VENCIDO: Acao[] = ["enviar_nova_versao", "solicitar_alteracao", "aprovar"];
+
+export function acoesPermitidas(estado: EstadoRoteiro, pedidoAbertoVencido = false): Acao[] {
+  if (estado === "alteracao_solicitada" && pedidoAbertoVencido) return ACOES_COM_PEDIDO_VENCIDO;
   return ACOES_POR_ESTADO[estado];
 }
 
 /** Lança 409 com um código específico quando a ação não cabe no estado atual. */
-export function exigirAcao(estado: EstadoRoteiro, acao: Acao): void {
-  if (ACOES_POR_ESTADO[estado].includes(acao)) return;
+export function exigirAcao(estado: EstadoRoteiro, acao: Acao, pedidoAbertoVencido = false): void {
+  if (acoesPermitidas(estado, pedidoAbertoVencido).includes(acao)) return;
   if (estado === "aprovado") {
     throw new ErroApi(409, "ROTEIRO_APROVADO", "O roteiro já foi aprovado; a revisão está encerrada.");
   }
@@ -34,7 +41,7 @@ export function exigirAcao(estado: EstadoRoteiro, acao: Acao): void {
     throw new ErroApi(
       409,
       "AGUARDANDO_NOVA_VERSAO",
-      "Há um pedido de alteração aberto; o criador precisa enviar uma nova versão antes.",
+      "Há um pedido de alteração aberto e dentro do prazo; o criador precisa enviar uma nova versão antes.",
     );
   }
   throw new ErroApi(

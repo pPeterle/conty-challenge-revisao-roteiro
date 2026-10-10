@@ -22,26 +22,26 @@ Limites: `http_req_failed < 1%` (com 400, 404, 409, 413 e 422 contados como resp
 
 ## Última execução
 
-Rodada em 2026-10-10 no meu Mac, com outros processos pesados ao mesmo tempo (load average entre 29 e 33 durante a execução). Trecho real da saída:
+Rodada em 2026-10-10 no meu Mac, com outros processos pesados ao mesmo tempo (load average entre 17 e 21). Em rodadas com a máquina mais carregada, o p95 chegou perto de 280 ms, ainda dentro do limite. Trecho real da saída:
 
 ```
 ✓ consulta 200
-✓ payload inválido responde 4xx (nunca 5xx)
 ✓ pedido de alteração 201 ou 409
+✓ payload inválido responde 4xx (nunca 5xx)
 ✓ reenvio com chave repetida responde 201
 ✓ aprovação 200 ou 409
 ✓ aprovar de novo: 409 ROTEIRO_APROVADO
 ✓ nova versão após aprovação: 409 ROTEIRO_APROVADO
 aprovacoes_aceitas.............: 10
-✓ checks.........................: 100.00% 20791 out of 20791
-  data_received..................: 173 MB  8.6 MB/s
-✓ http_req_duration..............: avg=95.9ms   min=1.58ms  med=61.07ms max=4.2s     p(90)=174.42ms p(95)=275.88ms
-✓ http_req_failed................: 0.00%   0 out of 20801
-  http_reqs......................: 20801   1033.310954/s
-  invalidos_recusados_4xx........: 920
-  reenvios_201...................: 2472
+✓ checks.........................: 100.00% 56224 out of 56224
+  data_received..................: 493 MB  25 MB/s
+✓ http_req_duration..............: avg=35.41ms min=1.02ms   med=28.18ms max=1.13s   p(90)=54.03ms  p(95)=67.38ms
+✓ http_req_failed................: 0.00%   0 out of 56234
+  http_reqs......................: 56234   2801.150947/s
+  invalidos_recusados_4xx........: 2110
+  reenvios_201...................: 2510
 verificação: 10 roteiros, 500 versões, 10 aprovados
 invariantes ok: uma aprovação por roteiro, versões 1..n sem buraco nem duplicata, versões antigas preservadas
 ```
 
-Boa parte do tráfego (173 MB recebidos) vem de `GET /roteiros/:id` devolver todas as versões com conteúdo. Está anotado no README entre as decisões que eu mudaria.
+Boa parte do tráfego (493 MB recebidos) vem de `GET /roteiros/:id` devolver todas as versões com conteúdo. Está anotado no README entre as decisões que eu mudaria.

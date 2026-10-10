@@ -48,14 +48,19 @@ CREATE TABLE IF NOT EXISTS pedidos_alteracao (
   prazo TEXT NOT NULL,
   prazo_fim TEXT NOT NULL,
   criado_em TEXT NOT NULL,
-  UNIQUE (roteiro_id, versao)
+  -- Preenchido quando a marca substitui ou aprova por cima de um pedido vencido.
+  expirado_em TEXT
 );
+
+-- Uma versão tem no máximo um pedido vigente; os expirados ficam guardados.
+CREATE UNIQUE INDEX IF NOT EXISTS um_pedido_vigente_por_versao
+  ON pedidos_alteracao (roteiro_id, versao) WHERE expirado_em IS NULL;
 
 CREATE TABLE IF NOT EXISTS eventos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   roteiro_id TEXT NOT NULL REFERENCES roteiros(id),
   versao INTEGER NOT NULL,
-  tipo TEXT NOT NULL CHECK (tipo IN ('enviado', 'alteracao_solicitada', 'reenviado', 'aprovado')),
+  tipo TEXT NOT NULL CHECK (tipo IN ('enviado', 'alteracao_solicitada', 'pedido_expirado', 'reenviado', 'aprovado')),
   dados TEXT,
   ocorrido_em TEXT NOT NULL
 );
@@ -129,13 +134,14 @@ export interface LinhaPedido {
   prazo: string;
   prazo_fim: string;
   criado_em: string;
+  expirado_em: string | null;
 }
 
 export interface LinhaEvento {
   id: number;
   roteiro_id: string;
   versao: number;
-  tipo: "enviado" | "alteracao_solicitada" | "reenviado" | "aprovado";
+  tipo: "enviado" | "alteracao_solicitada" | "pedido_expirado" | "reenviado" | "aprovado";
   dados: string | null;
   ocorrido_em: string;
 }
@@ -191,22 +197,27 @@ export function buscarVersao(db: DatabaseSync, roteiroId: string, numero: number
     .get(roteiroId, numero) as LinhaVersao | undefined;
 }
 
-export function inserirPedido(db: DatabaseSync, p: LinhaPedido): void {
+export function inserirPedido(db: DatabaseSync, p: Omit<LinhaPedido, "expirado_em">): void {
   db.prepare(
     `INSERT INTO pedidos_alteracao (id, roteiro_id, versao, motivo, prazo, prazo_fim, criado_em)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(p.id, p.roteiro_id, p.versao, p.motivo, p.prazo, p.prazo_fim, p.criado_em);
 }
 
+/** Pedido vigente (não expirado) da versão. */
 export function buscarPedidoDaVersao(db: DatabaseSync, roteiroId: string, versao: number): LinhaPedido | undefined {
   return db
-    .prepare("SELECT * FROM pedidos_alteracao WHERE roteiro_id = ? AND versao = ?")
+    .prepare("SELECT * FROM pedidos_alteracao WHERE roteiro_id = ? AND versao = ? AND expirado_em IS NULL")
     .get(roteiroId, versao) as LinhaPedido | undefined;
+}
+
+export function expirarPedido(db: DatabaseSync, id: string, quando: string): void {
+  db.prepare("UPDATE pedidos_alteracao SET expirado_em = ? WHERE id = ? AND expirado_em IS NULL").run(quando, id);
 }
 
 export function listarPedidos(db: DatabaseSync, roteiroId: string): LinhaPedido[] {
   return db
-    .prepare("SELECT * FROM pedidos_alteracao WHERE roteiro_id = ? ORDER BY versao")
+    .prepare("SELECT * FROM pedidos_alteracao WHERE roteiro_id = ? ORDER BY versao, criado_em, rowid")
     .all(roteiroId) as unknown as LinhaPedido[];
 }
 

@@ -16,7 +16,8 @@ let totalVersoes = 0;
 for (const id of repo.listarIdsRoteiros(db)) {
   const r = repo.buscarRoteiro(db, id)!;
   const versoes = repo.listarVersoes(db, id);
-  const pedidos = repo.listarPedidos(db, id);
+  // Pedidos expirados (vencidos e substituídos) não contam como pedido da versão.
+  const pedidos = repo.listarPedidos(db, id).filter((p) => p.expirado_em === null);
   const eventos = repo.listarEventos(db, id);
   const erro = (m: string) => falhas.push(`${id}: ${m}`);
   totalVersoes += versoes.length;

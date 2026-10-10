@@ -7,7 +7,7 @@ Cada caso de uso roda inteiro dentro de `BEGIN IMMEDIATE` (`transacao` em `src/d
 O `DatabaseSync` é síncrono e a API roda num processo só, então duas requisições nunca intercalam entre a leitura do estado e a escrita. O banco também se protege sozinho, caso algum dia isso deixe de ser verdade:
 
 - a chave primária `(roteiro_id, numero)` impede versão duplicada;
-- `UNIQUE (roteiro_id, versao)` em `pedidos_alteracao` impede dois pedidos para a mesma versão;
+- o índice único parcial `um_pedido_vigente_por_versao` impede dois pedidos vigentes para a mesma versão (um pedido vencido substituído fica com `expirado_em` preenchido e sai do índice);
 - o índice único parcial `uma_aprovacao_por_roteiro` em `eventos` impede uma segunda aprovação;
 - triggers recusam `UPDATE` do conteúdo e `DELETE` de versão.
 
@@ -27,6 +27,8 @@ O header é opcional nos três `POST` sobre um roteiro e vale por roteiro. A pri
 - 20 reenvios sem chave geram um 201 e 19 respostas 409;
 - 30 aprovações geram uma 200 e 29 respostas 409, com um único evento `aprovado`;
 - aprovação e pedido de alteração disputando a mesma versão: só um vence.
+
+`test/integration/pedido-vencido.test.ts` dispara 10 pedidos novos sobre o mesmo pedido vencido: um substitui, nove recebem 409.
 
 `test/integration/auditoria.test.ts` cobre a impressão independente da ordem dos campos e o header `Estado-Atual`.
 

@@ -27,6 +27,13 @@ describe("máquina de estados", () => {
     expect(acoesPermitidas("aprovado")).toEqual([]);
   });
 
+  it("com o pedido aberto vencido, a marca volta a poder aprovar ou pedir de novo", () => {
+    expect(acoesPermitidas("alteracao_solicitada", true)).toEqual(["enviar_nova_versao", "solicitar_alteracao", "aprovar"]);
+    expect(codigoDe(() => exigirAcao("alteracao_solicitada", "aprovar", true))).toBeUndefined();
+    expect(codigoDe(() => exigirAcao("alteracao_solicitada", "aprovar", false))).toBe("AGUARDANDO_NOVA_VERSAO");
+    expect(acoesPermitidas("aprovado", true)).toEqual([]);
+  });
+
   it("aprovado é terminal: nenhuma ação passa", () => {
     for (const acao of ["solicitar_alteracao", "enviar_nova_versao", "aprovar"] as Acao[]) {
       expect(codigoDe(() => exigirAcao("aprovado", acao))).toBe("ROTEIRO_APROVADO");

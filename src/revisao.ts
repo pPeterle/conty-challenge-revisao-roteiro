@@ -35,11 +35,15 @@ function exigirRoteiro(db: DatabaseSync, id: string): repo.LinhaRoteiro {
   return roteiro;
 }
 
-function pedidoParaJson(p: repo.LinhaPedido, agora: Date) {
+type SituacaoPedido = "aberto" | "atendido" | "expirado";
+
+function pedidoParaJson(p: repo.LinhaPedido, versaoAtual: number, agora: Date) {
   const fim = new Date(p.prazo_fim);
+  const situacao: SituacaoPedido = p.expirado_em ? "expirado" : p.versao < versaoAtual ? "atendido" : "aberto";
   return {
     id: p.id,
     versao: p.versao,
+    situacao,
     motivo: p.motivo,
     prazo: p.prazo,
     fuso: FUSO_MARCA,
@@ -47,29 +51,39 @@ function pedidoParaJson(p: repo.LinhaPedido, agora: Date) {
     prazo_fim_utc: p.prazo_fim,
     vencido: prazoVencido(fim, agora),
     criado_em: p.criado_em,
+    expirado_em: p.expirado_em,
   };
 }
 
+/** Pedido vigente da versão atual, quando o roteiro espera nova versão, e se ele já venceu. */
+function pedidoAbertoDe(db: DatabaseSync, r: repo.LinhaRoteiro, agora: Date) {
+  const pedido = r.estado === "alteracao_solicitada" ? repo.buscarPedidoDaVersao(db, r.id, r.versao_atual) : undefined;
+  return { pedido, vencido: pedido ? prazoVencido(new Date(pedido.prazo_fim), agora) : false };
+}
+
 export function montarRoteiro(db: DatabaseSync, r: repo.LinhaRoteiro, agora: Date) {
-  const pedidos = new Map(repo.listarPedidos(db, r.id).map((p) => [p.versao, p]));
-  const aberto = r.estado === "alteracao_solicitada" ? pedidos.get(r.versao_atual) : undefined;
+  const todos = repo.listarPedidos(db, r.id);
+  const { pedido: aberto, vencido } = pedidoAbertoDe(db, r, agora);
+  const json = (p: repo.LinhaPedido) => pedidoParaJson(p, r.versao_atual, agora);
   return {
     id: r.id,
     titulo: r.titulo,
     estado: r.estado,
     versao_atual: r.versao_atual,
-    acoes_permitidas: acoesPermitidas(r.estado),
-    pedido_alteracao_aberto: aberto ? pedidoParaJson(aberto, agora) : null,
+    acoes_permitidas: acoesPermitidas(r.estado, vencido),
+    pedido_alteracao_aberto: aberto ? json(aberto) : null,
     aprovacao: r.aprovado_em ? { versao: r.versao_aprovada, aprovado_em: r.aprovado_em } : null,
     versoes: repo.listarVersoes(db, r.id).map((v) => {
-      const pedido = pedidos.get(v.numero);
+      const daVersao = todos.filter((p) => p.versao === v.numero);
+      const vigente = daVersao.find((p) => p.expirado_em === null);
       return {
         numero: v.numero,
         estado: v.estado,
         conteudo: v.conteudo,
         enviada_em: v.enviada_em,
         enviada_apos_prazo: v.enviada_apos_prazo === 1,
-        pedido_alteracao: pedido ? pedidoParaJson(pedido, agora) : null,
+        pedido_alteracao: vigente ? json(vigente) : null,
+        pedidos_expirados: daVersao.filter((p) => p.expirado_em !== null).map(json),
       };
     }),
     criado_em: r.criado_em,
@@ -77,11 +91,24 @@ export function montarRoteiro(db: DatabaseSync, r: repo.LinhaRoteiro, agora: Dat
   };
 }
 
+/** Marca o pedido vencido como expirado e registra no histórico. */
+function expirar(deps: Deps, pedido: repo.LinhaPedido, quando: string): void {
+  repo.expirarPedido(deps.db, pedido.id, quando);
+  repo.inserirEvento(deps.db, {
+    roteiro_id: pedido.roteiro_id,
+    versao: pedido.versao,
+    tipo: "pedido_expirado",
+    dados: { pedido_id: pedido.id, prazo: pedido.prazo },
+    ocorrido_em: quando,
+  });
+}
+
 /**
  * Roda uma ação sobre um roteiro numa transação. O corpo chega já validado pelo zod
  * (400). Aqui a ordem é: roteiro existe (404), repetição de Idempotency-Key (devolve a
  * resposta gravada), estado permite a ação (409), regras que dependem do relógio
- * (422/400) e só então grava.
+ * (422/400) e só então grava. O estado considera o relógio: com o pedido aberto
+ * vencido, a marca volta a poder aprovar ou pedir de novo.
  *
  * A impressão da chave é feita sobre a saída do schema, que tem campos em ordem fixa,
  * então `{"a":1,"b":2}` e `{"b":2,"a":1}` contam como o mesmo pedido. Só sucesso é
@@ -93,7 +120,7 @@ function executarAcao<T>(
   chave: string | undefined,
   acao: Acao,
   dados: T,
-  executar: (roteiro: repo.LinhaRoteiro, dados: T, agora: Date) => Resultado,
+  executar: (roteiro: repo.LinhaRoteiro, dados: T, agora: Date, pedidoAberto?: repo.LinhaPedido) => Resultado,
 ): Resultado {
   const impressao = JSON.stringify({ acao, dados });
   return repo.transacao(deps.db, () => {
@@ -115,9 +142,10 @@ function executarAcao<T>(
       };
     }
 
-    exigirAcao(roteiro.estado, acao);
     const agora = deps.clock.now();
-    const resultado = executar(roteiro, dados, agora);
+    const { pedido, vencido } = pedidoAbertoDe(deps.db, roteiro, agora);
+    exigirAcao(roteiro.estado, acao, vencido);
+    const resultado = executar(roteiro, dados, agora, pedido);
     if (chave !== undefined) {
       repo.gravarChave(
         deps.db,
@@ -160,11 +188,13 @@ export function criarRoteiro(deps: Deps, { titulo, conteudo }: CriarRoteiro): Re
 }
 
 export function solicitarAlteracao(deps: Deps, roteiroId: string, corpo: PedidoAlteracao, chave?: string): Resultado {
-  return executarAcao(deps, roteiroId, chave, "solicitar_alteracao", corpo, (roteiro, dados, agora) => {
+  return executarAcao(deps, roteiroId, chave, "solicitar_alteracao", corpo, (roteiro, dados, agora, pedidoAberto) => {
     const prazo = verificarPrazo(dados.prazo, agora);
     exigirVersaoAtual(dados.versao ?? undefined, roteiro.versao_atual);
 
     const quando = agora.toISOString();
+    // Só chega aqui com pedido aberto se ele já venceu: o novo pedido o substitui.
+    if (pedidoAberto) expirar(deps, pedidoAberto, quando);
     repo.inserirPedido(deps.db, {
       id: randomUUID(),
       roteiro_id: roteiroId,
@@ -194,8 +224,7 @@ export function solicitarAlteracao(deps: Deps, roteiroId: string, corpo: PedidoA
 }
 
 export function enviarNovaVersao(deps: Deps, roteiroId: string, corpo: NovaVersao, chave?: string): Resultado {
-  return executarAcao(deps, roteiroId, chave, "enviar_nova_versao", corpo, (roteiro, dados, agora) => {
-    const pedido = repo.buscarPedidoDaVersao(deps.db, roteiroId, roteiro.versao_atual);
+  return executarAcao(deps, roteiroId, chave, "enviar_nova_versao", corpo, (roteiro, dados, agora, pedido) => {
     // Reenvio depois do prazo é aceito, mas fica marcado: a marca decide o que fazer com o atraso.
     const aposPrazo = pedido ? prazoVencido(new Date(pedido.prazo_fim), agora) : false;
     const numero = roteiro.versao_atual + 1;
@@ -227,10 +256,12 @@ export function enviarNovaVersao(deps: Deps, roteiroId: string, corpo: NovaVersa
 }
 
 export function aprovar(deps: Deps, roteiroId: string, corpo: Aprovacao, chave?: string): Resultado {
-  return executarAcao(deps, roteiroId, chave, "aprovar", corpo, (roteiro, dados, agora) => {
+  return executarAcao(deps, roteiroId, chave, "aprovar", corpo, (roteiro, dados, agora, pedidoAberto) => {
     exigirVersaoAtual(dados.versao ?? undefined, roteiro.versao_atual);
 
     const quando = agora.toISOString();
+    // Aprovar com pedido aberto só é possível depois que ele venceu; ele deixa de valer.
+    if (pedidoAberto) expirar(deps, pedidoAberto, quando);
     repo.mudarEstadoVersao(deps.db, roteiroId, roteiro.versao_atual, "aprovada");
     repo.atualizarRoteiro(deps.db, roteiroId, {
       estado: "aprovado",
