@@ -12,6 +12,30 @@ import {
 export type EstadoRoteiro = "aguardando_revisao" | "alteracao_solicitada" | "aprovado";
 export type EstadoVersao = "aguardando_revisao" | "alteracao_solicitada" | "aprovada";
 export type Acao = "solicitar_alteracao" | "enviar_nova_versao" | "aprovar";
+export type Ator = "marca" | "criador";
+
+/** Quem pode fazer cada coisa. Criar o roteiro (enviar a versão 1) é do criador. */
+const ATOR_DA_ACAO: Record<Acao | "criar_roteiro", Ator> = {
+  criar_roteiro: "criador",
+  enviar_nova_versao: "criador",
+  solicitar_alteracao: "marca",
+  aprovar: "marca",
+};
+
+const DESCRICAO_DA_ACAO: Record<Acao | "criar_roteiro", string> = {
+  criar_roteiro: "enviar o roteiro",
+  enviar_nova_versao: "enviar nova versão",
+  solicitar_alteracao: "pedir alteração",
+  aprovar: "aprovar",
+};
+
+/** 403 quando o ator do header não é quem faz essa ação. */
+export function exigirAtor(ator: Ator, acao: Acao | "criar_roteiro"): void {
+  const esperado = ATOR_DA_ACAO[acao];
+  if (ator !== esperado) {
+    throw new ErroApi(403, "ATOR_NAO_PERMITIDO", `Só ${esperado === "marca" ? "a marca" : "o criador"} pode ${DESCRICAO_DA_ACAO[acao]}.`);
+  }
+}
 
 const ACOES_POR_ESTADO: Record<EstadoRoteiro, Acao[]> = {
   aguardando_revisao: ["solicitar_alteracao", "aprovar"],
@@ -28,6 +52,14 @@ const ACOES_COM_PEDIDO_VENCIDO: Acao[] = ["enviar_nova_versao", "solicitar_alter
 export function acoesPermitidas(estado: EstadoRoteiro, pedidoAbertoVencido = false): Acao[] {
   if (estado === "alteracao_solicitada" && pedidoAbertoVencido) return ACOES_COM_PEDIDO_VENCIDO;
   return ACOES_POR_ESTADO[estado];
+}
+
+export function acoesPorAtor(estado: EstadoRoteiro, pedidoAbertoVencido = false): Record<Ator, Acao[]> {
+  const acoes = acoesPermitidas(estado, pedidoAbertoVencido);
+  return {
+    marca: acoes.filter((a) => ATOR_DA_ACAO[a] === "marca"),
+    criador: acoes.filter((a) => ATOR_DA_ACAO[a] === "criador"),
+  };
 }
 
 /** Lança 409 com um código específico quando a ação não cabe no estado atual. */

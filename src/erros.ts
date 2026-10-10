@@ -1,4 +1,4 @@
-export type StatusErro = 400 | 404 | 409 | 413 | 422;
+export type StatusErro = 400 | 403 | 404 | 409 | 413 | 422;
 
 export interface DetalheErro {
   campo: string;

@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS eventos (
   roteiro_id TEXT NOT NULL REFERENCES roteiros(id),
   versao INTEGER NOT NULL,
   tipo TEXT NOT NULL CHECK (tipo IN ('enviado', 'alteracao_solicitada', 'pedido_expirado', 'reenviado', 'aprovado')),
+  ator TEXT NOT NULL CHECK (ator IN ('marca', 'criador')),
   dados TEXT,
   ocorrido_em TEXT NOT NULL
 );
@@ -142,6 +143,7 @@ export interface LinhaEvento {
   roteiro_id: string;
   versao: number;
   tipo: "enviado" | "alteracao_solicitada" | "pedido_expirado" | "reenviado" | "aprovado";
+  ator: "marca" | "criador";
   dados: string | null;
   ocorrido_em: string;
 }
@@ -226,8 +228,8 @@ export function inserirEvento(
   e: Omit<LinhaEvento, "id" | "dados"> & { dados?: Record<string, unknown> },
 ): void {
   db.prepare(
-    "INSERT INTO eventos (roteiro_id, versao, tipo, dados, ocorrido_em) VALUES (?, ?, ?, ?, ?)",
-  ).run(e.roteiro_id, e.versao, e.tipo, e.dados ? JSON.stringify(e.dados) : null, e.ocorrido_em);
+    "INSERT INTO eventos (roteiro_id, versao, tipo, ator, dados, ocorrido_em) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(e.roteiro_id, e.versao, e.tipo, e.ator, e.dados ? JSON.stringify(e.dados) : null, e.ocorrido_em);
 }
 
 export function listarEventos(db: DatabaseSync, roteiroId: string): LinhaEvento[] {

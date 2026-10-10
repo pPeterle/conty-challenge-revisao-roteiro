@@ -8,7 +8,8 @@ import * as revisao from "./revisao.ts";
 import {
   aprovacaoSchema,
   criarRoteiroSchema,
-  idempotenciaHeaderSchema,
+  acaoHeaderSchema,
+  atorHeaderSchema,
   novaVersaoSchema,
   pedidoAlteracaoSchema,
   roteiroParamSchema,
@@ -74,8 +75,8 @@ export function createApp(deps: AppDeps) {
     return c.json(r.corpo, r.status);
   };
 
-  app.post("/roteiros", validar("json", criarRoteiroSchema), (c) =>
-    responder(c, revisao.criarRoteiro(deps, c.req.valid("json"))),
+  app.post("/roteiros", validar("header", atorHeaderSchema), validar("json", criarRoteiroSchema), (c) =>
+    responder(c, revisao.criarRoteiro(deps, c.req.valid("json"), c.req.valid("header")["x-ator"])),
   );
 
   app.get("/roteiros/:id", validar("param", roteiroParamSchema), (c) =>
@@ -94,7 +95,7 @@ export function createApp(deps: AppDeps) {
   app.post(
     "/roteiros/:id/pedidos-alteracao",
     validar("param", roteiroParamSchema),
-    validar("header", idempotenciaHeaderSchema),
+    validar("header", acaoHeaderSchema),
     validar("json", pedidoAlteracaoSchema),
     (c) =>
       responder(
@@ -103,6 +104,7 @@ export function createApp(deps: AppDeps) {
           deps,
           c.req.valid("param").id,
           c.req.valid("json"),
+          c.req.valid("header")["x-ator"],
           c.req.valid("header")["idempotency-key"],
         ),
       ),
@@ -111,24 +113,24 @@ export function createApp(deps: AppDeps) {
   app.post(
     "/roteiros/:id/versoes",
     validar("param", roteiroParamSchema),
-    validar("header", idempotenciaHeaderSchema),
+    validar("header", acaoHeaderSchema),
     validar("json", novaVersaoSchema),
     (c) =>
       responder(
         c,
-        revisao.enviarNovaVersao(deps, c.req.valid("param").id, c.req.valid("json"), c.req.valid("header")["idempotency-key"]),
+        revisao.enviarNovaVersao(deps, c.req.valid("param").id, c.req.valid("json"), c.req.valid("header")["x-ator"], c.req.valid("header")["idempotency-key"]),
       ),
   );
 
   app.post(
     "/roteiros/:id/aprovacao",
     validar("param", roteiroParamSchema),
-    validar("header", idempotenciaHeaderSchema),
+    validar("header", acaoHeaderSchema),
     validar("json", aprovacaoSchema),
     (c) =>
       responder(
         c,
-        revisao.aprovar(deps, c.req.valid("param").id, c.req.valid("json"), c.req.valid("header")["idempotency-key"]),
+        revisao.aprovar(deps, c.req.valid("param").id, c.req.valid("json"), c.req.valid("header")["x-ator"], c.req.valid("header")["idempotency-key"]),
       ),
   );
 

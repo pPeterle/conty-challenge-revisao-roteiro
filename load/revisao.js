@@ -15,7 +15,7 @@ const versoesCriadasOuRepetidas = new Counter("reenvios_201");
 const invalidosRecusados = new Counter("invalidos_recusados_4xx");
 
 // 4xx são respostas esperadas aqui; só 5xx ou erro de rede contam como falha.
-http.setResponseCallback(http.expectedStatuses(200, 201, 400, 404, 409, 413, 422));
+http.setResponseCallback(http.expectedStatuses(200, 201, 400, 403, 404, 409, 413, 422));
 
 // Prazo válido para o relógio real do servidor: daqui a 30 dias.
 const PRAZO = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
@@ -23,23 +23,30 @@ const PRAZO = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0
 // Corpo acima de 1 MB (413) fica só no teste de integração: o servidor responde antes de
 // ler o corpo inteiro e fecha a conexão, e o k6 registra isso como "connection reset".
 function payloadInvalido(id) {
+  // [método, caminho, corpo, X-Ator]
   const casos = [
-    ["POST", `/roteiros/${id}/versoes`, "{conteudo:"],
-    ["POST", `/roteiros/${id}/versoes`, JSON.stringify({ conteudo: 123 })],
-    ["POST", `/roteiros/${id}/versoes`, "null"],
-    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "\u200B", prazo: PRAZO })],
-    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "x", prazo: "31/12/2026" })],
-    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "x", prazo: "2026-13-01" })],
-    ["POST", `/roteiros/${id}/pedidos-alteracao`, "[]"],
-    ["POST", `/roteiros/${id}/aprovacao`, JSON.stringify({ versao: -1 })],
-    ["POST", `/roteiros/${id}/aprovacao`, '{"versao":1e400}'],
-    ["POST", "/roteiros", JSON.stringify({ titulo: 42, conteudo: ["x"] })],
-    ["POST", "/roteiros/nao-existe/aprovacao", "{}"],
-    ["GET", `/roteiros/${id}/versoes/0x1`, null],
-    ["POST", `/roteiros/${id}/versoes`, String(Math.random())],
+    ["POST", `/roteiros/${id}/versoes`, "{conteudo:", "criador"],
+    ["POST", `/roteiros/${id}/versoes`, JSON.stringify({ conteudo: 123 }), "criador"],
+    ["POST", `/roteiros/${id}/versoes`, "null", "criador"],
+    ["POST", `/roteiros/${id}/versoes`, String(Math.random()), "criador"],
+    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "\u200B", prazo: PRAZO }), "marca"],
+    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "x", prazo: "31/12/2026" }), "marca"],
+    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "x", prazo: "2026-13-01" }), "marca"],
+    ["POST", `/roteiros/${id}/pedidos-alteracao`, "[]", "marca"],
+    ["POST", `/roteiros/${id}/aprovacao`, JSON.stringify({ versao: -1 }), "marca"],
+    ["POST", `/roteiros/${id}/aprovacao`, '{"versao":1e400}', "marca"],
+    ["POST", "/roteiros", JSON.stringify({ titulo: 42, conteudo: ["x"] }), "criador"],
+    ["POST", "/roteiros/nao-existe/aprovacao", "{}", "marca"],
+    ["GET", `/roteiros/${id}/versoes/0x1`, null, null],
+    // Papel errado (403) e header ausente ou inválido (400).
+    ["POST", `/roteiros/${id}/aprovacao`, "{}", "criador"],
+    ["POST", `/roteiros/${id}/versoes`, JSON.stringify({ conteudo: "intrusa" }), "marca"],
+    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "x", prazo: PRAZO }), null],
+    ["POST", `/roteiros/${id}/aprovacao`, "{}", "agencia"],
   ];
-  const [metodo, caminho, corpo] = casos[Math.floor(Math.random() * casos.length)];
-  return http.request(metodo, `${BASE_URL}${caminho}`, corpo, { ...json, tags: { op: "invalido" } });
+  const [metodo, caminho, corpo, ator] = casos[Math.floor(Math.random() * casos.length)];
+  const headers = ator ? { ...json.headers, "X-Ator": ator } : json.headers;
+  return http.request(metodo, `${BASE_URL}${caminho}`, corpo, { headers, tags: { op: "invalido" } });
 }
 
 export const options = {
@@ -54,6 +61,8 @@ export const options = {
 };
 
 const json = { headers: { "content-type": "application/json" } };
+const marca = { headers: { ...json.headers, "X-Ator": "marca" } };
+const criador = { headers: { ...json.headers, "X-Ator": "criador" } };
 
 export function setup() {
   const ids = [];
@@ -61,7 +70,7 @@ export function setup() {
     const r = http.post(
       `${BASE_URL}/roteiros`,
       JSON.stringify({ titulo: `Roteiro de carga ${i + 1}`, conteudo: "versão 1" }),
-      json,
+      criador,
     );
     if (r.status !== 201) throw new Error(`setup falhou: ${r.status} ${r.body}`);
     ids.push(r.json("id"));
@@ -89,7 +98,7 @@ export default function ({ ids }) {
     const r = http.post(
       `${BASE_URL}/roteiros/${id}/versoes`,
       JSON.stringify({ conteudo: `versão ${versao + 1}` }),
-      { headers: { ...json.headers, "Idempotency-Key": `reenvio-da-v${versao}` }, tags: { op: "reenviar" } },
+      { headers: { ...criador.headers, "Idempotency-Key": `reenvio-da-v${versao}` }, tags: { op: "reenviar" } },
     );
     check(r, { "reenvio com chave repetida responde 201": (x) => x.status === 201 });
     if (r.status === 201) versoesCriadasOuRepetidas.add(1);
@@ -100,7 +109,7 @@ export default function ({ ids }) {
     const r = http.post(
       `${BASE_URL}/roteiros/${id}/pedidos-alteracao`,
       JSON.stringify({ motivo: `ajuste na versão ${versao}`, prazo: PRAZO, versao }),
-      { ...json, tags: { op: "pedir_alteracao" } },
+      { ...marca, tags: { op: "pedir_alteracao" } },
     );
     check(r, { "pedido de alteração 201 ou 409": (x) => x.status === 201 || x.status === 409 });
     return;
@@ -108,7 +117,7 @@ export default function ({ ids }) {
 
   if (estado === "aguardando_revisao") {
     // Metade aprova com chave (repetições viram replay 200), metade sem chave (perdedores levam 409).
-    const headers = __VU % 2 === 0 ? { ...json.headers, "Idempotency-Key": `aprovar-v${versao}` } : json.headers;
+    const headers = __VU % 2 === 0 ? { ...marca.headers, "Idempotency-Key": `aprovar-v${versao}` } : marca.headers;
     const r = http.post(`${BASE_URL}/roteiros/${id}/aprovacao`, JSON.stringify({ versao }), {
       headers,
       tags: { op: "aprovar" },
@@ -119,9 +128,9 @@ export default function ({ ids }) {
   }
 
   // Aprovado: tudo precisa voltar 409 ROTEIRO_APROVADO.
-  const aprovar = http.post(`${BASE_URL}/roteiros/${id}/aprovacao`, "{}", { ...json, tags: { op: "aprovar_de_novo" } });
+  const aprovar = http.post(`${BASE_URL}/roteiros/${id}/aprovacao`, "{}", { ...marca, tags: { op: "aprovar_de_novo" } });
   const reenviar = http.post(`${BASE_URL}/roteiros/${id}/versoes`, JSON.stringify({ conteudo: "tarde demais" }), {
-    ...json,
+    ...criador,
     tags: { op: "reenviar_aprovado" },
   });
   check(aprovar, { "aprovar de novo: 409 ROTEIRO_APROVADO": (x) => x.status === 409 && x.json("error.code") === "ROTEIRO_APROVADO" });

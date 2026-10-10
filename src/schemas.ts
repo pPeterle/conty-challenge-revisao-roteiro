@@ -71,8 +71,16 @@ export const versaoParamSchema = roteiroParamSchema.extend({
     .transform(Number),
 });
 
-export const idempotenciaHeaderSchema = z
+const ator = z.enum(["marca", "criador"], {
+  errorMap: () => ({ message: 'Informe o header X-Ator com "marca" ou "criador".' }),
+});
+
+/** Header obrigatório em toda ação: quem está agindo. */
+export const atorHeaderSchema = z.object({ "x-ator": ator }).strip();
+
+export const acaoHeaderSchema = z
   .object({
+    "x-ator": ator,
     "idempotency-key": z
       .string()
       .trim()
@@ -90,7 +98,7 @@ export type Aprovacao = z.infer<typeof aprovacaoSchema>;
 /** Código de erro do contrato da API para cada problema apontado pelo zod. */
 export function codigoDoProblema(problema: ZodIssue, alvo: keyof ValidationTargets): string {
   if (alvo === "param") return "PARAMETRO_INVALIDO";
-  if (alvo === "header") return "CHAVE_IDEMPOTENCIA_INVALIDA";
+  if (alvo === "header") return problema.path[0] === "x-ator" ? "ATOR_INVALIDO" : "CHAVE_IDEMPOTENCIA_INVALIDA";
   const campo = problema.path[0];
   if (campo === undefined) return "JSON_INVALIDO";
   if (problema.code === "custom" && typeof problema.params?.codigo === "string") return problema.params.codigo;

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   acoesPermitidas,
+  acoesPorAtor,
   exigirAcao,
+  exigirAtor,
   exigirVersaoAtual,
   verificarPrazo,
   type Acao,
@@ -74,5 +76,25 @@ describe("prazo em relação ao relógio", () => {
 
   it("prazo distante é aceito: não existe teto de negócio", () => {
     expect(verificarPrazo(dia("9999-12-31"), agora).texto).toBe("9999-12-31");
+  });
+});
+
+describe("papéis", () => {
+  it("só o criador envia versões e só a marca pede alteração e aprova", () => {
+    expect(codigoDe(() => exigirAtor("criador", "criar_roteiro"))).toBeUndefined();
+    expect(codigoDe(() => exigirAtor("criador", "enviar_nova_versao"))).toBeUndefined();
+    expect(codigoDe(() => exigirAtor("marca", "solicitar_alteracao"))).toBeUndefined();
+    expect(codigoDe(() => exigirAtor("marca", "aprovar"))).toBeUndefined();
+    expect(codigoDe(() => exigirAtor("marca", "enviar_nova_versao"))).toBe("ATOR_NAO_PERMITIDO");
+    expect(codigoDe(() => exigirAtor("criador", "aprovar"))).toBe("ATOR_NAO_PERMITIDO");
+    expect(codigoDe(() => exigirAtor("criador", "solicitar_alteracao"))).toBe("ATOR_NAO_PERMITIDO");
+    expect(codigoDe(() => exigirAtor("marca", "criar_roteiro"))).toBe("ATOR_NAO_PERMITIDO");
+  });
+
+  it("acoesPorAtor reparte as ações permitidas", () => {
+    expect(acoesPorAtor("alteracao_solicitada", true)).toEqual({
+      marca: ["solicitar_alteracao", "aprovar"],
+      criador: ["enviar_nova_versao"],
+    });
   });
 });

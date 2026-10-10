@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { montar } from "./helpers.ts";
+import { atorPadrao, montar } from "./helpers.ts";
 
 const TABELAS = ["roteiros", "versoes", "pedidos_alteracao", "eventos", "chaves_idempotencia"];
 
@@ -11,7 +11,7 @@ function contarLinhas(db: DatabaseSync): Record<string, number> {
 }
 
 async function enviarCru(app: ReturnType<typeof montar>["app"], caminho: string, corpo: string, headers: Record<string, string> = {}) {
-  const res = await app.request(caminho, { method: "POST", body: corpo, headers });
+  const res = await app.request(caminho, { method: "POST", body: corpo, headers: { ...atorPadrao("POST", caminho), ...headers } });
   return { status: res.status, json: (await res.json()) as { error?: { code: string; message: string } } };
 }
 
@@ -178,7 +178,7 @@ describe("payloads inválidos não passam e não gravam nada", () => {
   it("aprovação aceita corpo vazio, porque todos os campos dela são opcionais", async () => {
     const { app, criarRoteiro } = montar();
     const id = await criarRoteiro();
-    const r = await app.request(`/roteiros/${id}/aprovacao`, { method: "POST" });
+    const r = await app.request(`/roteiros/${id}/aprovacao`, { method: "POST", headers: { "X-Ator": "marca" } });
     expect(r.status).toBe(200);
   });
 });

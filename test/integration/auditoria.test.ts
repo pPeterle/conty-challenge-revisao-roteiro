@@ -31,7 +31,7 @@ describe("Idempotency-Key", () => {
       app.request(`/roteiros/${id}/pedidos-alteracao`, {
         method: "POST",
         body: corpo,
-        headers: { "content-type": "application/json", "Idempotency-Key": "ordem" },
+        headers: { "content-type": "application/json", "Idempotency-Key": "ordem", "X-Ator": "marca" },
       });
     const primeira = await enviar('{"motivo":"ajuste","prazo":"2026-03-12","versao":1}');
     const segunda = await enviar('{"versao":1,"prazo":"2026-03-12","motivo":"  ajuste  "}');

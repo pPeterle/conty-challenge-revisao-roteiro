@@ -40,6 +40,11 @@ for (const id of repo.listarIdsRoteiros(db)) {
     if (v.estado !== "alteracao_solicitada") erro(`versão antiga ${v.numero} em estado ${v.estado}`);
   }
 
+  const atorEsperado = { enviado: "criador", reenviado: "criador", alteracao_solicitada: "marca", pedido_expirado: "marca", aprovado: "marca" } as const;
+  for (const e of eventos) {
+    if (e.ator !== atorEsperado[e.tipo]) erro(`evento ${e.tipo} da versão ${e.versao} gravado com ator ${e.ator}`);
+  }
+
   const aprovacoes = eventos.filter((e) => e.tipo === "aprovado");
   if (aprovacoes.length > 1) erro(`${aprovacoes.length} aprovações`);
   if (r.estado === "aprovado") {
@@ -61,4 +66,4 @@ if (falhas.length > 0) {
   console.error(`invariantes quebradas (${falhas.length}):\n${falhas.slice(0, 20).join("\n")}`);
   process.exit(1);
 }
-console.log("invariantes ok: uma aprovação por roteiro, versões 1..n sem buraco nem duplicata, versões antigas preservadas");
+console.log("invariantes ok: uma aprovação por roteiro, versões 1..n sem buraco nem duplicata, versões antigas preservadas, ator certo em cada evento");

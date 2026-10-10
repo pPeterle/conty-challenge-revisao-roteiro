@@ -5,7 +5,10 @@ import type { Clock } from "./clock.ts";
 import * as repo from "./db.ts";
 import {
   acoesPermitidas,
+  acoesPorAtor,
   exigirAcao,
+  exigirAtor,
+  type Ator,
   exigirVersaoAtual,
   verificarPrazo,
   type Acao,
@@ -73,6 +76,7 @@ export function montarRoteiro(db: DatabaseSync, r: repo.LinhaRoteiro, agora: Dat
     pedido_vencido: vencido,
     versao_atual: r.versao_atual,
     acoes_permitidas: acoesPermitidas(r.estado, vencido),
+    acoes_por_ator: acoesPorAtor(r.estado, vencido),
     pedido_alteracao_aberto: aberto ? json(aberto) : null,
     aprovacao: r.aprovado_em ? { versao: r.versao_aprovada, aprovado_em: r.aprovado_em } : null,
     versoes: repo.listarVersoes(db, r.id).map((v) => {
@@ -94,12 +98,13 @@ export function montarRoteiro(db: DatabaseSync, r: repo.LinhaRoteiro, agora: Dat
 }
 
 /** Marca o pedido vencido como expirado e registra no histórico. */
-function expirar(deps: Deps, pedido: repo.LinhaPedido, quando: string): void {
+function expirar(deps: Deps, pedido: repo.LinhaPedido, ator: Ator, quando: string): void {
   repo.expirarPedido(deps.db, pedido.id, quando);
   repo.inserirEvento(deps.db, {
     roteiro_id: pedido.roteiro_id,
     versao: pedido.versao,
     tipo: "pedido_expirado",
+    ator,
     dados: { pedido_id: pedido.id, prazo: pedido.prazo },
     ocorrido_em: quando,
   });
@@ -121,9 +126,11 @@ function executarAcao<T>(
   roteiroId: string,
   chave: string | undefined,
   acao: Acao,
+  ator: Ator,
   dados: T,
   executar: (roteiro: repo.LinhaRoteiro, dados: T, agora: Date, pedidoAberto?: repo.LinhaPedido) => Resultado,
 ): Resultado {
+  exigirAtor(ator, acao);
   const impressao = JSON.stringify({ acao, dados });
   return repo.transacao(deps.db, () => {
     const roteiro = exigirRoteiro(deps.db, roteiroId);
@@ -161,7 +168,8 @@ function executarAcao<T>(
   });
 }
 
-export function criarRoteiro(deps: Deps, { titulo, conteudo }: CriarRoteiro): Resultado {
+export function criarRoteiro(deps: Deps, { titulo, conteudo }: CriarRoteiro, ator: Ator): Resultado {
+  exigirAtor(ator, "criar_roteiro");
   return repo.transacao(deps.db, () => {
     const agora = deps.clock.now();
     const quando = agora.toISOString();
@@ -184,19 +192,19 @@ export function criarRoteiro(deps: Deps, { titulo, conteudo }: CriarRoteiro): Re
       enviada_em: quando,
       enviada_apos_prazo: 0,
     });
-    repo.inserirEvento(deps.db, { roteiro_id: id, versao: 1, tipo: "enviado", ocorrido_em: quando });
+    repo.inserirEvento(deps.db, { roteiro_id: id, versao: 1, tipo: "enviado", ator, ocorrido_em: quando });
     return { status: 201, corpo: montarRoteiro(deps.db, exigirRoteiro(deps.db, id), agora) };
   });
 }
 
-export function solicitarAlteracao(deps: Deps, roteiroId: string, corpo: PedidoAlteracao, chave?: string): Resultado {
-  return executarAcao(deps, roteiroId, chave, "solicitar_alteracao", corpo, (roteiro, dados, agora, pedidoAberto) => {
+export function solicitarAlteracao(deps: Deps, roteiroId: string, corpo: PedidoAlteracao, ator: Ator, chave?: string): Resultado {
+  return executarAcao(deps, roteiroId, chave, "solicitar_alteracao", ator, corpo, (roteiro, dados, agora, pedidoAberto) => {
     const prazo = verificarPrazo(dados.prazo, agora);
     exigirVersaoAtual(dados.versao ?? undefined, roteiro.versao_atual);
 
     const quando = agora.toISOString();
     // Só chega aqui com pedido aberto se ele já venceu: o novo pedido o substitui.
-    if (pedidoAberto) expirar(deps, pedidoAberto, quando);
+    if (pedidoAberto) expirar(deps, pedidoAberto, ator, quando);
     repo.inserirPedido(deps.db, {
       id: randomUUID(),
       roteiro_id: roteiroId,
@@ -218,6 +226,7 @@ export function solicitarAlteracao(deps: Deps, roteiroId: string, corpo: PedidoA
       roteiro_id: roteiroId,
       versao: roteiro.versao_atual,
       tipo: "alteracao_solicitada",
+      ator,
       dados: { motivo: dados.motivo, prazo: prazo.texto, prazo_fim: prazo.fim.toISOString() },
       ocorrido_em: quando,
     });
@@ -225,8 +234,8 @@ export function solicitarAlteracao(deps: Deps, roteiroId: string, corpo: PedidoA
   });
 }
 
-export function enviarNovaVersao(deps: Deps, roteiroId: string, corpo: NovaVersao, chave?: string): Resultado {
-  return executarAcao(deps, roteiroId, chave, "enviar_nova_versao", corpo, (roteiro, dados, agora, pedido) => {
+export function enviarNovaVersao(deps: Deps, roteiroId: string, corpo: NovaVersao, ator: Ator, chave?: string): Resultado {
+  return executarAcao(deps, roteiroId, chave, "enviar_nova_versao", ator, corpo, (roteiro, dados, agora, pedido) => {
     // Reenvio depois do prazo é aceito, mas fica marcado: a marca decide o que fazer com o atraso.
     const aposPrazo = pedido ? prazoVencido(new Date(pedido.prazo_fim), agora) : false;
     const numero = roteiro.versao_atual + 1;
@@ -250,6 +259,7 @@ export function enviarNovaVersao(deps: Deps, roteiroId: string, corpo: NovaVersa
       roteiro_id: roteiroId,
       versao: numero,
       tipo: "reenviado",
+      ator,
       dados: { apos_prazo: aposPrazo, prazo: pedido?.prazo ?? null },
       ocorrido_em: quando,
     });
@@ -257,13 +267,13 @@ export function enviarNovaVersao(deps: Deps, roteiroId: string, corpo: NovaVersa
   });
 }
 
-export function aprovar(deps: Deps, roteiroId: string, corpo: Aprovacao, chave?: string): Resultado {
-  return executarAcao(deps, roteiroId, chave, "aprovar", corpo, (roteiro, dados, agora, pedidoAberto) => {
+export function aprovar(deps: Deps, roteiroId: string, corpo: Aprovacao, ator: Ator, chave?: string): Resultado {
+  return executarAcao(deps, roteiroId, chave, "aprovar", ator, corpo, (roteiro, dados, agora, pedidoAberto) => {
     exigirVersaoAtual(dados.versao ?? undefined, roteiro.versao_atual);
 
     const quando = agora.toISOString();
     // Aprovar com pedido aberto só é possível depois que ele venceu; ele deixa de valer.
-    if (pedidoAberto) expirar(deps, pedidoAberto, quando);
+    if (pedidoAberto) expirar(deps, pedidoAberto, ator, quando);
     repo.mudarEstadoVersao(deps.db, roteiroId, roteiro.versao_atual, "aprovada");
     repo.atualizarRoteiro(deps.db, roteiroId, {
       estado: "aprovado",
@@ -276,6 +286,7 @@ export function aprovar(deps: Deps, roteiroId: string, corpo: Aprovacao, chave?:
       roteiro_id: roteiroId,
       versao: roteiro.versao_atual,
       tipo: "aprovado",
+      ator,
       ocorrido_em: quando,
     });
     return { status: 200, corpo: montarRoteiro(deps.db, exigirRoteiro(deps.db, roteiroId), agora) };
@@ -303,6 +314,7 @@ export function obterHistorico(deps: Deps, roteiroId: string) {
     eventos: repo.listarEventos(deps.db, roteiroId).map((e) => ({
       tipo: e.tipo,
       versao: e.versao,
+      ator: e.ator,
       ocorrido_em: e.ocorrido_em,
       ...(e.dados ? { dados: JSON.parse(e.dados) as unknown } : {}),
     })),
