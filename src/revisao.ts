@@ -69,6 +69,8 @@ export function montarRoteiro(db: DatabaseSync, r: repo.LinhaRoteiro, agora: Dat
     id: r.id,
     titulo: r.titulo,
     estado: r.estado,
+    // Derivado do relógio: true quando o roteiro espera nova versão e o prazo do pedido já passou.
+    pedido_vencido: vencido,
     versao_atual: r.versao_atual,
     acoes_permitidas: acoesPermitidas(r.estado, vencido),
     pedido_alteracao_aberto: aberto ? json(aberto) : null,

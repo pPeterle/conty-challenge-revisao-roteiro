@@ -18,7 +18,7 @@ npm run load         # precisa de Docker; sobe a API na porta 3101 com banco tem
 
 ## Estados
 
-`GET /roteiros/:id` traz `estado`, `versao_atual`, `acoes_permitidas` e `pedido_alteracao_aberto`. Com esses campos o cliente sabe qual é o próximo passo.
+`GET /roteiros/:id` traz `estado`, `pedido_vencido`, `versao_atual`, `acoes_permitidas` e `pedido_alteracao_aberto`. `pedido_vencido` é derivado do relógio e fica `true` quando o roteiro espera nova versão e o prazo do pedido já passou. Com esses campos o cliente sabe qual é o próximo passo.
 
 ```mermaid
 stateDiagram-v2

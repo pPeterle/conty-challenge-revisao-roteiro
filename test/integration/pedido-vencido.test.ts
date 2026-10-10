@@ -106,6 +106,34 @@ describe("pedido de alteração vencido deixa de valer e a marca recupera a deci
   });
 });
 
+describe("campo pedido_vencido no roteiro", () => {
+  it("pedido_vencido é false até o último instante do prazo e true a partir do primeiro instante do dia seguinte", async () => {
+    const { chamar, clock, id } = await comPedidoAberto();
+    expect((await chamar("GET", `/roteiros/${id}`)).json).toMatchObject({ estado: "alteracao_solicitada", pedido_vencido: false });
+    clock.set("2026-03-13T02:59:59.999Z");
+    expect((await chamar("GET", `/roteiros/${id}`)).json.pedido_vencido).toBe(false);
+    clock.set("2026-03-13T03:00:00.000Z");
+    expect((await chamar("GET", `/roteiros/${id}`)).json).toMatchObject({ estado: "alteracao_solicitada", pedido_vencido: true });
+  });
+
+  it("pedido_vencido volta a false quando a marca substitui o pedido vencido ou o criador reenvia", async () => {
+    const { chamar, clock, id } = await comPedidoAberto();
+    clock.set("2026-03-14T12:00:00.000Z");
+    const novo = await chamar("POST", `/roteiros/${id}/pedidos-alteracao`, { motivo: "novo", prazo: "2026-03-20" });
+    expect(novo.json.pedido_vencido).toBe(false);
+    const v2 = await chamar("POST", `/roteiros/${id}/versoes`, { conteudo: "v2" });
+    expect(v2.json).toMatchObject({ estado: "aguardando_revisao", pedido_vencido: false });
+  });
+
+  it("roteiro sem pedido aberto ou aprovado tem pedido_vencido false", async () => {
+    const { chamar, criarRoteiro } = montar();
+    const id = await criarRoteiro();
+    expect((await chamar("GET", `/roteiros/${id}`)).json.pedido_vencido).toBe(false);
+    const aprovado = await chamar("POST", `/roteiros/${id}/aprovacao`);
+    expect(aprovado.json.pedido_vencido).toBe(false);
+  });
+});
+
 describe("entradas estranhas", () => {
   it.each(["0099-12-31", "0001-01-01", "0000-03-12"])("prazo com ano menor que 100 (%s) responde 400 PRAZO_INVALIDO", async (prazo) => {
     const { chamar, criarRoteiro } = montar();
