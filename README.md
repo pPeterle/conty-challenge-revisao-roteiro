@@ -112,7 +112,7 @@ curl -s localhost:3000/roteiros/$ID/historico
 
 Revisão de roteiro tem poucas ações por roteiro, espalhadas ao longo de dias. Um processo Node com sqlite serializando as escritas dá conta disso com folga, e as garantias ficam em restrições do banco que eu consigo testar: chave primária no número da versão, um pedido por versão e um índice único parcial que permite uma aprovação por roteiro. Cada ação roda inteira numa transação `BEGIN IMMEDIATE`. Não usei Redis nem lock distribuído porque nenhuma ação tem efeito fora do banco. Detalhes de idempotência, concorrência e do caminho para várias instâncias estão em [docs/concorrencia.md](docs/concorrencia.md).
 
-Teste de carga: 100 usuários virtuais por 20 s disputando 10 roteiros, com 10% de payloads inválidos. Na última execução: p95 de 67,38 ms, 2801 req/s, 0% de falha, 100% dos checks e invariantes conferidas no banco. A máquina tinha outros processos pesados rodando (load average perto de 20), e as rodadas variaram bastante por isso. Cenário e saída em [docs/carga.md](docs/carga.md).
+Teste de carga: 100 usuários virtuais por 20 s disputando 10 roteiros, com 10% de payloads inválidos. Na última execução, nesta máquina: p95 de 34,82 ms, 4231 req/s, 0% de falha, 100% dos checks e invariantes conferidas no banco. O limite do k6 para o p95 é 500 ms, folgado de propósito para máquinas mais lentas; checks, taxa de erro e invariantes continuam rígidos. Cenário e saída em [docs/carga.md](docs/carga.md).
 
 ## O que ficou de fora
 
