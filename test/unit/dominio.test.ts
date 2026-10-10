@@ -72,8 +72,7 @@ describe("prazo em relação ao relógio", () => {
     expect(prazo.fim.toISOString()).toBe("2026-03-11T02:59:59.999Z");
   });
 
-  it("prazo pode ir até um ano à frente da data de hoje em São Paulo", () => {
-    expect(verificarPrazo(dia("2027-03-10"), agora).texto).toBe("2027-03-10");
-    expect(codigoDe(() => verificarPrazo(dia("2027-03-11"), agora))).toBe("PRAZO_MUITO_DISTANTE");
+  it("prazo distante é aceito: não existe teto de negócio", () => {
+    expect(verificarPrazo(dia("9999-12-31"), agora).texto).toBe("9999-12-31");
   });
 });

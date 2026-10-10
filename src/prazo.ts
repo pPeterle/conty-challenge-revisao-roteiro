@@ -10,13 +10,18 @@ export interface DataCivil {
 
 const FORMATO_DATA = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-/** Aceita só `YYYY-MM-DD` de uma data que existe no calendário (rejeita 2026-02-30). */
+/**
+ * Aceita só `YYYY-MM-DD` de uma data que existe no calendário (rejeita 2026-02-30).
+ * O formato já limita o ano a 9999; anos abaixo de 100 são recusados porque o
+ * `Date.UTC` os trata como 19xx.
+ */
 export function parseDataCivil(texto: string): DataCivil | null {
   const m = FORMATO_DATA.exec(texto);
   if (!m) return null;
   const ano = Number(m[1]);
   const mes = Number(m[2]);
   const dia = Number(m[3]);
+  if (ano < 100) return null;
   const d = new Date(Date.UTC(ano, mes - 1, dia));
   if (d.getUTCFullYear() !== ano || d.getUTCMonth() !== mes - 1 || d.getUTCDate() !== dia) {
     return null;

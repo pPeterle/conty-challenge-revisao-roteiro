@@ -74,25 +74,19 @@ describe("Idempotency-Key", () => {
 });
 
 describe("limite do prazo", () => {
-  it("prazo exatamente um ano à frente (no fuso da marca) passa; um dia depois responde 400 PRAZO_MUITO_DISTANTE", async () => {
+  it("não há teto de negócio: prazo distante é aceito enquanto o formato for válido (até 9999-12-31)", async () => {
     const { chamar, criarRoteiro } = montar("2026-03-10T15:00:00.000Z");
     const id = await criarRoteiro();
-    const longe = await chamar("POST", `/roteiros/${id}/pedidos-alteracao`, { motivo: "x", prazo: "2027-03-11" });
-    expect(longe.status).toBe(400);
-    expect(longe.json.error).toEqual({
-      code: "PRAZO_MUITO_DISTANTE",
-      message: "O prazo pode ser no máximo 1 ano à frente (até 2027-03-10).",
-    });
-    const limite = await chamar("POST", `/roteiros/${id}/pedidos-alteracao`, { motivo: "x", prazo: "2027-03-10" });
-    expect(limite.status).toBe(201);
+    const r = await chamar("POST", `/roteiros/${id}/pedidos-alteracao`, { motivo: "x", prazo: "9999-12-31" });
+    expect(r.status).toBe(201);
+    expect(r.json.pedido_alteracao_aberto.prazo_fim).toBe("9999-12-31T23:59:59.999-03:00");
   });
 
-  it("o limite usa a data de hoje em São Paulo, mesmo quando o UTC já virou", async () => {
-    // 2026-03-11T01:00Z ainda é 2026-03-10 em São Paulo: o limite segue 2027-03-10.
-    const { chamar, criarRoteiro } = montar("2026-03-11T01:00:00.000Z");
+  it("ano com mais de 4 dígitos não passa no formato (400 PRAZO_INVALIDO)", async () => {
+    const { chamar, criarRoteiro } = montar();
     const id = await criarRoteiro();
-    const r = await chamar("POST", `/roteiros/${id}/pedidos-alteracao`, { motivo: "x", prazo: "2027-03-11" });
+    const r = await chamar("POST", `/roteiros/${id}/pedidos-alteracao`, { motivo: "x", prazo: "10000-01-01" });
     expect(r.status).toBe(400);
-    expect(r.json.error.code).toBe("PRAZO_MUITO_DISTANTE");
+    expect(r.json.error.code).toBe("PRAZO_INVALIDO");
   });
 });

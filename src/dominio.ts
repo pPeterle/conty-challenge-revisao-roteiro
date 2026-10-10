@@ -3,7 +3,6 @@
 import { ErroApi } from "./erros.ts";
 import {
   FUSO_MARCA,
-  dataCivilNoFuso,
   fimDoDia,
   formatarDataCivil,
   prazoVencido,
@@ -66,8 +65,6 @@ export const LIMITES = {
   titulo: 200,
   conteudo: 50_000,
   motivo: 2_000,
-  /** O prazo pode ficar no máximo um ano à frente da data de hoje no fuso da marca. */
-  anosDePrazo: 1,
 } as const;
 
 export interface PrazoValidado {
@@ -82,16 +79,6 @@ export function verificarPrazo(data: DataCivil, agora: Date): PrazoValidado {
   const fim = fimDoDia(data, FUSO_MARCA);
   if (prazoVencido(fim, agora)) {
     throw new ErroApi(422, "PRAZO_VENCIDO", `O prazo ${texto} já passou no fuso da marca (${FUSO_MARCA}).`);
-  }
-  const hoje = dataCivilNoFuso(agora, FUSO_MARCA);
-  const limite = formatarDataCivil({ ...hoje, ano: hoje.ano + LIMITES.anosDePrazo });
-  // Datas AAAA-MM-DD comparam bem como texto.
-  if (texto > limite) {
-    throw new ErroApi(
-      400,
-      "PRAZO_MUITO_DISTANTE",
-      `O prazo pode ser no máximo ${LIMITES.anosDePrazo} ano à frente (até ${limite}).`,
-    );
   }
   return { data, texto, fim };
 }

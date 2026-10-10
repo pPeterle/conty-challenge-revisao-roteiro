@@ -10,7 +10,7 @@ São 100 usuários virtuais por 20 s disputando 10 roteiros, 10 por roteiro. Em 
 - em `alteracao_solicitada`, reenvia usando a mesma `Idempotency-Key` que todos os outros que viram a mesma versão. Todos precisam receber 201 e só uma versão pode nascer;
 - com 50 versões, aprova. Metade aprova com chave (repetições viram replay 200), metade sem chave (perdedores recebem 409);
 - depois de aprovado, tenta aprovar e reenviar de novo, e precisa receber 409 `ROTEIRO_APROVADO`;
-- em 10% das iterações manda um payload inválido sorteado (JSON quebrado, `null`, array, tipo errado, motivo só com zero-width space, prazo em outro formato ou absurdo, `versao` negativa ou `1e400`, roteiro inexistente, `versoes/0x1`, número solto). A resposta precisa ser 4xx.
+- em 10% das iterações manda um payload inválido sorteado (JSON quebrado, `null`, array, tipo errado, motivo só com zero-width space, prazo em outro formato ou com mês 13, `versao` negativa ou `1e400`, roteiro inexistente, `versoes/0x1`, número solto). A resposta precisa ser 4xx.
 
 O corpo acima de 1 MB (413) fica só no teste de integração: o servidor responde antes de ler o corpo inteiro e fecha a conexão, e o k6 registra isso como "connection reset by peer" em vez de 413.
 

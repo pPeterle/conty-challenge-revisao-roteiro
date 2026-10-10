@@ -29,7 +29,7 @@ function payloadInvalido(id) {
     ["POST", `/roteiros/${id}/versoes`, "null"],
     ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "\u200B", prazo: PRAZO })],
     ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "x", prazo: "31/12/2026" })],
-    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "x", prazo: "9999-12-31" })],
+    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "x", prazo: "2026-13-01" })],
     ["POST", `/roteiros/${id}/pedidos-alteracao`, "[]"],
     ["POST", `/roteiros/${id}/aprovacao`, JSON.stringify({ versao: -1 })],
     ["POST", `/roteiros/${id}/aprovacao`, '{"versao":1e400}'],
