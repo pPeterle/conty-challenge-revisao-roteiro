@@ -1,5 +1,6 @@
 // Carga concentrada em poucos roteiros: vários usuários virtuais disputam o mesmo
 // roteiro, pedindo alteração, reenviando (com Idempotency-Key repetida) e aprovando.
+// Cerca de 10% das iterações mandam payload inválido e precisam receber 4xx.
 import http from "k6/http";
 import { check } from "k6";
 import { Counter } from "k6/metrics";
@@ -11,7 +12,35 @@ const MAX_VERSAO = Number(__ENV.MAX_VERSAO || 50);
 const aprovacoesAceitas = new Counter("aprovacoes_aceitas");
 const versoesCriadasOuRepetidas = new Counter("reenvios_201");
 
-http.setResponseCallback(http.expectedStatuses(200, 201, 409));
+const invalidosRecusados = new Counter("invalidos_recusados_4xx");
+
+// 4xx são respostas esperadas aqui; só 5xx ou erro de rede contam como falha.
+http.setResponseCallback(http.expectedStatuses(200, 201, 400, 404, 409, 413, 422));
+
+// Prazo válido para o relógio real do servidor: daqui a 30 dias.
+const PRAZO = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+// Corpo acima de 1 MB (413) fica só no teste de integração: o servidor responde antes de
+// ler o corpo inteiro e fecha a conexão, e o k6 registra isso como "connection reset".
+function payloadInvalido(id) {
+  const casos = [
+    ["POST", `/roteiros/${id}/versoes`, "{conteudo:"],
+    ["POST", `/roteiros/${id}/versoes`, JSON.stringify({ conteudo: 123 })],
+    ["POST", `/roteiros/${id}/versoes`, "null"],
+    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "\u200B", prazo: PRAZO })],
+    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "x", prazo: "31/12/2026" })],
+    ["POST", `/roteiros/${id}/pedidos-alteracao`, JSON.stringify({ motivo: "x", prazo: "9999-12-31" })],
+    ["POST", `/roteiros/${id}/pedidos-alteracao`, "[]"],
+    ["POST", `/roteiros/${id}/aprovacao`, JSON.stringify({ versao: -1 })],
+    ["POST", `/roteiros/${id}/aprovacao`, '{"versao":1e400}'],
+    ["POST", "/roteiros", JSON.stringify({ titulo: 42, conteudo: ["x"] })],
+    ["POST", "/roteiros/nao-existe/aprovacao", "{}"],
+    ["GET", `/roteiros/${id}/versoes/0x1`, null],
+    ["POST", `/roteiros/${id}/versoes`, String(Math.random())],
+  ];
+  const [metodo, caminho, corpo] = casos[Math.floor(Math.random() * casos.length)];
+  return http.request(metodo, `${BASE_URL}${caminho}`, corpo, { ...json, tags: { op: "invalido" } });
+}
 
 export const options = {
   scenarios: {
@@ -42,6 +71,14 @@ export function setup() {
 
 export default function ({ ids }) {
   const id = ids[(__VU - 1) % ids.length];
+
+  if (Math.random() < 0.1) {
+    const r = payloadInvalido(id);
+    if (check(r, { "payload inválido responde 4xx (nunca 5xx)": (x) => x.status >= 400 && x.status < 500 })) {
+      invalidosRecusados.add(1);
+    }
+    return;
+  }
   const atual = http.get(`${BASE_URL}/roteiros/${id}`, { tags: { op: "consultar" } });
   if (!check(atual, { "consulta 200": (r) => r.status === 200 })) return;
   const estado = atual.json("estado");
@@ -62,7 +99,7 @@ export default function ({ ids }) {
   if (estado === "aguardando_revisao" && versao < MAX_VERSAO) {
     const r = http.post(
       `${BASE_URL}/roteiros/${id}/pedidos-alteracao`,
-      JSON.stringify({ motivo: `ajuste na versão ${versao}`, prazo: "2099-12-31", versao }),
+      JSON.stringify({ motivo: `ajuste na versão ${versao}`, prazo: PRAZO, versao }),
       { ...json, tags: { op: "pedir_alteracao" } },
     );
     check(r, { "pedido de alteração 201 ou 409": (x) => x.status === 201 || x.status === 409 });
