@@ -2,7 +2,7 @@
 
 ## Transação por ação
 
-Cada caso de uso roda inteiro dentro de `BEGIN IMMEDIATE` (`transacao` em `src/db.ts`, `executarAcao` em `src/revisao.ts`). Dentro da transação a ordem é: o roteiro existe, a `Idempotency-Key` já foi usada, o estado permite a ação, a regra do relógio vale (prazo vencido ou distante demais). Só então a ação grava.
+Cada caso de uso roda inteiro dentro de `BEGIN IMMEDIATE` (`transacao` em `src/db.ts`, `executarAcao` em `src/revisao.ts`). Dentro da transação a ordem é: o roteiro existe, a `Idempotency-Key` já foi usada, o estado permite a ação, a regra do relógio vale (prazo ainda não vencido). Só então a ação grava.
 
 O `DatabaseSync` é síncrono e a API roda num processo só, então duas requisições nunca intercalam entre a leitura do estado e a escrita. O banco também se protege sozinho, caso algum dia isso deixe de ser verdade:
 

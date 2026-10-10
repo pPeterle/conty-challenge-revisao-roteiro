@@ -23,7 +23,7 @@ Limites: `http_req_failed < 1%` (com 400, 403, 404, 409, 413 e 422 contados como
 
 ## Última execução
 
-Rodada em 2026-10-10 no meu Mac, com outros processos rodando (load average entre 16 e 18). Trecho real da saída:
+Rodada em 2026-10-10 nesta máquina (um Mac com outros processos rodando, load average perto de 7). Trecho real da saída:
 
 ```
 ✓ consulta 200
@@ -34,15 +34,15 @@ Rodada em 2026-10-10 no meu Mac, com outros processos rodando (load average entr
 ✓ aprovar de novo: 409 ROTEIRO_APROVADO
 ✓ nova versão após aprovação: 409 ROTEIRO_APROVADO
 aprovacoes_aceitas.............: 10
-✓ checks.........................: 100.00% 59167 out of 59167
-  data_received..................: 520 MB  26 MB/s
-✓ http_req_duration..............: avg=33.7ms   min=792.97µs med=27.21ms max=1.14s    p(90)=50.47ms  p(95)=67.7ms
-✓ http_req_failed................: 0.00%   0 out of 59177
-  http_reqs......................: 59177   2950.829557/s
-  invalidos_recusados_4xx........: 2322
-  reenvios_201...................: 2267
+✓ checks.........................: 100.00% 91551 out of 91551
+  data_received..................: 785 MB  39 MB/s
+✓ http_req_duration..............: avg=21.79ms  min=639µs    med=20.9ms  max=844.38ms p(90)=26.37ms  p(95)=31.16ms
+✓ http_req_failed................: 0.00%   0 out of 91561
+  http_reqs......................: 91561   4568.781724/s
+  invalidos_recusados_4xx........: 3458
+  reenvios_201...................: 2497
 verificação: 10 roteiros, 500 versões, 10 aprovados
 invariantes ok: uma aprovação por roteiro, versões 1..n sem buraco nem duplicata, versões antigas preservadas, ator certo em cada evento
 ```
 
-Boa parte do tráfego (520 MB recebidos) vem de `GET /roteiros/:id` devolver todas as versões com conteúdo. Está anotado no README entre as decisões que eu mudaria.
+Boa parte do tráfego (785 MB recebidos) vem de `GET /roteiros/:id` devolver todas as versões com conteúdo. Está anotado no README entre as decisões que eu mudaria.
