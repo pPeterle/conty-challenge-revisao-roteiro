@@ -3,12 +3,12 @@ import {
   acoesPermitidas,
   exigirAcao,
   exigirVersaoAtual,
-  validarMotivo,
-  validarPrazo,
+  verificarPrazo,
   type Acao,
   type EstadoRoteiro,
 } from "../../src/dominio.ts";
 import { ErroApi } from "../../src/erros.ts";
+import { parseDataCivil } from "../../src/prazo.ts";
 
 function codigoDe(fn: () => unknown): string | undefined {
   try {
@@ -51,32 +51,22 @@ describe("máquina de estados", () => {
   });
 });
 
-describe("validação do pedido de alteração", () => {
+describe("prazo em relação ao relógio", () => {
   const agora = new Date("2026-03-10T15:00:00.000Z");
-
-  it("motivo ausente, vazio ou só com espaços não passa", () => {
-    expect(codigoDe(() => validarMotivo(undefined))).toBe("MOTIVO_OBRIGATORIO");
-    expect(codigoDe(() => validarMotivo(""))).toBe("MOTIVO_OBRIGATORIO");
-    expect(codigoDe(() => validarMotivo("   "))).toBe("MOTIVO_OBRIGATORIO");
-    expect(codigoDe(() => validarMotivo(42))).toBe("MOTIVO_INVALIDO");
-    expect(validarMotivo("  trocar o gancho  ")).toBe("trocar o gancho");
-  });
-
-  it("prazo ausente, mal formatado ou inexistente não passa", () => {
-    expect(codigoDe(() => validarPrazo(undefined, agora))).toBe("PRAZO_OBRIGATORIO");
-    expect(codigoDe(() => validarPrazo("", agora))).toBe("PRAZO_OBRIGATORIO");
-    expect(codigoDe(() => validarPrazo("2026-03-12T23:59:59-03:00", agora))).toBe("PRAZO_INVALIDO");
-    expect(codigoDe(() => validarPrazo("2026-02-30", agora))).toBe("PRAZO_INVALIDO");
-    expect(codigoDe(() => validarPrazo(20260312, agora))).toBe("PRAZO_INVALIDO");
-  });
+  const dia = (s: string) => parseDataCivil(s)!;
 
   it("prazo de um dia que já terminou em São Paulo não vale", () => {
-    expect(codigoDe(() => validarPrazo("2026-03-09", agora))).toBe("PRAZO_VENCIDO");
+    expect(codigoDe(() => verificarPrazo(dia("2026-03-09"), agora))).toBe("PRAZO_VENCIDO");
   });
 
   it("prazo para hoje vale e guarda o fim do dia", () => {
-    const prazo = validarPrazo("2026-03-10", agora);
+    const prazo = verificarPrazo(dia("2026-03-10"), agora);
     expect(prazo.texto).toBe("2026-03-10");
     expect(prazo.fim.toISOString()).toBe("2026-03-11T02:59:59.999Z");
+  });
+
+  it("prazo pode ir até um ano à frente da data de hoje em São Paulo", () => {
+    expect(verificarPrazo(dia("2027-03-10"), agora).texto).toBe("2027-03-10");
+    expect(codigoDe(() => verificarPrazo(dia("2027-03-11"), agora))).toBe("PRAZO_MUITO_DISTANTE");
   });
 });

@@ -1,41 +1,31 @@
 import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { HTTPException } from "hono/http-exception";
 import type { DatabaseSync } from "node:sqlite";
 import type { Clock } from "./clock.ts";
 import { ErroApi } from "./erros.ts";
 import * as revisao from "./revisao.ts";
+import {
+  aprovacaoSchema,
+  criarRoteiroSchema,
+  idempotenciaHeaderSchema,
+  novaVersaoSchema,
+  pedidoAlteracaoSchema,
+  roteiroParamSchema,
+  validar,
+  versaoParamSchema,
+} from "./schemas.ts";
+
+const LIMITE_CORPO_BYTES = 1024 * 1024;
+const TIPO_JSON = /^application\/([a-z.-]+\+)?json\b/i;
 
 export interface AppDeps {
   db: DatabaseSync;
   clock: Clock;
 }
 
-async function lerCorpo(c: Context): Promise<Record<string, unknown>> {
-  const texto = await c.req.text();
-  if (texto.trim() === "") return {};
-  let corpo: unknown;
-  try {
-    corpo = JSON.parse(texto);
-  } catch {
-    throw new ErroApi(400, "JSON_INVALIDO", "O corpo da requisição não é um JSON válido.");
-  }
-  if (typeof corpo !== "object" || corpo === null || Array.isArray(corpo)) {
-    throw new ErroApi(400, "JSON_INVALIDO", "O corpo da requisição precisa ser um objeto JSON.");
-  }
-  return corpo as Record<string, unknown>;
-}
-
-function chaveIdempotencia(c: Context): string | undefined {
-  const chave = c.req.header("Idempotency-Key")?.trim();
-  if (chave === undefined || chave === "") return undefined;
-  if (chave.length > 200) {
-    throw new ErroApi(400, "CHAVE_IDEMPOTENCIA_INVALIDA", "A Idempotency-Key pode ter no máximo 200 caracteres.");
-  }
-  return chave;
-}
-
-function responder(c: Context, r: revisao.Resultado) {
-  if (r.repetida) c.header("Idempotent-Replayed", "true");
-  return c.json(r.corpo, r.status);
+function erro(code: string, message: string) {
+  return { error: { code, message } };
 }
 
 export function createApp(deps: AppDeps) {
@@ -43,40 +33,104 @@ export function createApp(deps: AppDeps) {
 
   app.onError((err, c) => {
     if (err instanceof ErroApi) {
-      return c.json({ error: { code: err.code, message: err.message } }, err.status);
+      const corpo = { error: { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) } };
+      return c.json(corpo, err.status);
+    }
+    // O validador do Hono lança 400 quando o JSON não faz parse.
+    if (err instanceof HTTPException && err.status === 400) {
+      return c.json(erro("JSON_INVALIDO", "O corpo da requisição não é um JSON válido."), 400);
     }
     console.error(err);
-    return c.json({ error: { code: "ERRO_INTERNO", message: "Erro inesperado no servidor." } }, 500);
+    return c.json(erro("ERRO_INTERNO", "Erro inesperado no servidor."), 500);
   });
 
-  app.notFound((c) => c.json({ error: { code: "ROTA_NAO_ENCONTRADA", message: "Rota não encontrada." } }, 404));
+  app.notFound((c) => c.json(erro("ROTA_NAO_ENCONTRADA", "Rota não encontrada."), 404));
+
+  app.use(
+    "*",
+    bodyLimit({
+      maxSize: LIMITE_CORPO_BYTES,
+      onError: (c) => c.json(erro("CORPO_MUITO_GRANDE", "O corpo da requisição pode ter no máximo 1 MB."), 413),
+    }),
+  );
+
+  // Corpo só é aceito como JSON. Sem corpo (ex.: POST /aprovacao sem nada) segue normalmente.
+  app.use("*", async (c, next) => {
+    if (c.req.method === "POST" && !TIPO_JSON.test(c.req.header("content-type") ?? "")) {
+      if ((await c.req.text()) !== "") {
+        throw new ErroApi(400, "CONTENT_TYPE_INVALIDO", "Envie o corpo como JSON, com Content-Type: application/json.");
+      }
+    }
+    await next();
+  });
 
   app.get("/health", (c) => c.json({ ok: true }));
 
-  app.post("/roteiros", async (c) => responder(c, revisao.criarRoteiro(deps, await lerCorpo(c))));
+  const responder = (c: Context, r: revisao.Resultado) => {
+    if (r.repetida) {
+      c.header("Idempotent-Replayed", "true");
+      if (r.estadoAtual) c.header("Estado-Atual", r.estadoAtual);
+    }
+    return c.json(r.corpo, r.status);
+  };
 
-  app.get("/roteiros/:id", (c) => c.json(revisao.obterRoteiro(deps, c.req.param("id"))));
-
-  app.get("/roteiros/:id/historico", (c) => c.json(revisao.obterHistorico(deps, c.req.param("id"))));
-
-  app.get("/roteiros/:id/versoes/:numero", (c) =>
-    c.json(revisao.obterVersao(deps, c.req.param("id"), c.req.param("numero"))),
+  app.post("/roteiros", validar("json", criarRoteiroSchema), (c) =>
+    responder(c, revisao.criarRoteiro(deps, c.req.valid("json"))),
   );
 
-  app.post("/roteiros/:id/pedidos-alteracao", async (c) => {
-    const corpo = await lerCorpo(c);
-    return responder(c, revisao.solicitarAlteracao(deps, c.req.param("id"), corpo, chaveIdempotencia(c)));
+  app.get("/roteiros/:id", validar("param", roteiroParamSchema), (c) =>
+    c.json(revisao.obterRoteiro(deps, c.req.valid("param").id)),
+  );
+
+  app.get("/roteiros/:id/historico", validar("param", roteiroParamSchema), (c) =>
+    c.json(revisao.obterHistorico(deps, c.req.valid("param").id)),
+  );
+
+  app.get("/roteiros/:id/versoes/:numero", validar("param", versaoParamSchema), (c) => {
+    const { id, numero } = c.req.valid("param");
+    return c.json(revisao.obterVersao(deps, id, numero));
   });
 
-  app.post("/roteiros/:id/versoes", async (c) => {
-    const corpo = await lerCorpo(c);
-    return responder(c, revisao.enviarNovaVersao(deps, c.req.param("id"), corpo, chaveIdempotencia(c)));
-  });
+  app.post(
+    "/roteiros/:id/pedidos-alteracao",
+    validar("param", roteiroParamSchema),
+    validar("header", idempotenciaHeaderSchema),
+    validar("json", pedidoAlteracaoSchema),
+    (c) =>
+      responder(
+        c,
+        revisao.solicitarAlteracao(
+          deps,
+          c.req.valid("param").id,
+          c.req.valid("json"),
+          c.req.valid("header")["idempotency-key"],
+        ),
+      ),
+  );
 
-  app.post("/roteiros/:id/aprovacao", async (c) => {
-    const corpo = await lerCorpo(c);
-    return responder(c, revisao.aprovar(deps, c.req.param("id"), corpo, chaveIdempotencia(c)));
-  });
+  app.post(
+    "/roteiros/:id/versoes",
+    validar("param", roteiroParamSchema),
+    validar("header", idempotenciaHeaderSchema),
+    validar("json", novaVersaoSchema),
+    (c) =>
+      responder(
+        c,
+        revisao.enviarNovaVersao(deps, c.req.valid("param").id, c.req.valid("json"), c.req.valid("header")["idempotency-key"]),
+      ),
+  );
+
+  app.post(
+    "/roteiros/:id/aprovacao",
+    validar("param", roteiroParamSchema),
+    validar("header", idempotenciaHeaderSchema),
+    validar("json", aprovacaoSchema),
+    (c) =>
+      responder(
+        c,
+        revisao.aprovar(deps, c.req.valid("param").id, c.req.valid("json"), c.req.valid("header")["idempotency-key"]),
+      ),
+  );
 
   return app;
 }

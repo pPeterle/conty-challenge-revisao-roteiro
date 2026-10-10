@@ -10,7 +10,7 @@ export function montar(inicio = "2026-03-10T15:00:00.000Z") {
   async function chamar(metodo: string, caminho: string, corpo?: unknown, headers: Record<string, string> = {}) {
     const res = await app.request(caminho, {
       method: metodo,
-      headers: { "content-type": "application/json", ...headers },
+      headers: corpo === undefined ? headers : { "content-type": "application/json", ...headers },
       body: corpo === undefined ? undefined : typeof corpo === "string" ? corpo : JSON.stringify(corpo),
     });
     const json = (await res.json()) as any;

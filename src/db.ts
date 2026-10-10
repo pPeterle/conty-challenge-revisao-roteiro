@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS eventos (
   ocorrido_em TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS eventos_por_roteiro ON eventos (roteiro_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uma_aprovacao_por_roteiro ON eventos (roteiro_id) WHERE tipo = 'aprovado';
 
 CREATE TABLE IF NOT EXISTS chaves_idempotencia (

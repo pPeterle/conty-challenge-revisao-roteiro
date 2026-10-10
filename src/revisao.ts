@@ -7,13 +7,13 @@ import {
   acoesPermitidas,
   exigirAcao,
   exigirVersaoAtual,
-  validarMotivo,
-  validarPrazo,
-  validarTextoObrigatorio,
-  validarVersaoOpcional,
+  verificarPrazo,
+  type Acao,
+  type EstadoRoteiro,
 } from "./dominio.ts";
 import { ErroApi } from "./erros.ts";
 import { FUSO_MARCA, formatarNoFuso, prazoVencido } from "./prazo.ts";
+import type { Aprovacao, CriarRoteiro, NovaVersao, PedidoAlteracao } from "./schemas.ts";
 
 export interface Deps {
   db: DatabaseSync;
@@ -24,9 +24,10 @@ export interface Resultado {
   status: 200 | 201;
   corpo: unknown;
   repetida?: boolean;
+  /** Em repetições, o estado de agora (o corpo é a foto da primeira resposta). */
+  estadoAtual?: EstadoRoteiro;
 }
 
-type Corpo = Record<string, unknown>;
 
 function exigirRoteiro(db: DatabaseSync, id: string): repo.LinhaRoteiro {
   const roteiro = repo.buscarRoteiro(db, id);
@@ -77,46 +78,60 @@ export function montarRoteiro(db: DatabaseSync, r: repo.LinhaRoteiro, agora: Dat
 }
 
 /**
- * Com Idempotency-Key, a primeira resposta de sucesso fica gravada e é devolvida
- * igual nas repetições. Erros não são gravados: a repetição reavalia o estado.
+ * Roda uma ação sobre um roteiro numa transação. O corpo chega já validado pelo zod
+ * (400). Aqui a ordem é: roteiro existe (404), repetição de Idempotency-Key (devolve a
+ * resposta gravada), estado permite a ação (409), regras que dependem do relógio
+ * (422/400) e só então grava.
+ *
+ * A impressão da chave é feita sobre a saída do schema, que tem campos em ordem fixa,
+ * então `{"a":1,"b":2}` e `{"b":2,"a":1}` contam como o mesmo pedido. Só sucesso é
+ * gravado: depois de um erro, a mesma chave reavalia o estado.
  */
-function comIdempotencia(
+function executarAcao<T>(
   deps: Deps,
   roteiroId: string,
   chave: string | undefined,
-  operacao: string,
-  corpo: Corpo,
-  executar: () => Resultado,
+  acao: Acao,
+  dados: T,
+  executar: (roteiro: repo.LinhaRoteiro, dados: T, agora: Date) => Resultado,
 ): Resultado {
+  const impressao = JSON.stringify({ acao, dados });
   return repo.transacao(deps.db, () => {
-    if (chave === undefined) return executar();
-    const impressao = JSON.stringify({ operacao, corpo });
-    const existente = repo.buscarChave(deps.db, roteiroId, chave);
+    const roteiro = exigirRoteiro(deps.db, roteiroId);
+    const existente = chave === undefined ? undefined : repo.buscarChave(deps.db, roteiroId, chave);
     if (existente) {
-      if (existente.impressao !== impressao) {
+      if (impressao !== existente.impressao) {
         throw new ErroApi(
           422,
           "CHAVE_IDEMPOTENCIA_REUTILIZADA",
           "Essa Idempotency-Key já foi usada com outra operação ou outro corpo.",
         );
       }
-      return { status: existente.status as 200 | 201, corpo: JSON.parse(existente.resposta), repetida: true };
+      return {
+        status: existente.status as 200 | 201,
+        corpo: JSON.parse(existente.resposta),
+        repetida: true,
+        estadoAtual: roteiro.estado,
+      };
     }
-    const resultado = executar();
-    repo.gravarChave(
-      deps.db,
-      roteiroId,
-      chave,
-      { impressao, status: resultado.status, resposta: JSON.stringify(resultado.corpo) },
-      deps.clock.now().toISOString(),
-    );
+
+    exigirAcao(roteiro.estado, acao);
+    const agora = deps.clock.now();
+    const resultado = executar(roteiro, dados, agora);
+    if (chave !== undefined) {
+      repo.gravarChave(
+        deps.db,
+        roteiroId,
+        chave,
+        { impressao, status: resultado.status, resposta: JSON.stringify(resultado.corpo) },
+        agora.toISOString(),
+      );
+    }
     return resultado;
   });
 }
 
-export function criarRoteiro(deps: Deps, corpo: Corpo): Resultado {
-  const titulo = validarTextoObrigatorio(corpo.titulo, "titulo").trim();
-  const conteudo = validarTextoObrigatorio(corpo.conteudo, "conteudo");
+export function criarRoteiro(deps: Deps, { titulo, conteudo }: CriarRoteiro): Resultado {
   return repo.transacao(deps.db, () => {
     const agora = deps.clock.now();
     const quando = agora.toISOString();
@@ -144,22 +159,17 @@ export function criarRoteiro(deps: Deps, corpo: Corpo): Resultado {
   });
 }
 
-export function solicitarAlteracao(deps: Deps, roteiroId: string, corpo: Corpo, chave?: string): Resultado {
-  return comIdempotencia(deps, roteiroId, chave, "solicitar_alteracao", corpo, () => {
-    const agora = deps.clock.now();
-    const roteiro = exigirRoteiro(deps.db, roteiroId);
-    const motivo = validarMotivo(corpo.motivo);
-    const prazo = validarPrazo(corpo.prazo, agora);
-    const versao = validarVersaoOpcional(corpo.versao);
-    exigirAcao(roteiro.estado, "solicitar_alteracao");
-    exigirVersaoAtual(versao, roteiro.versao_atual);
+export function solicitarAlteracao(deps: Deps, roteiroId: string, corpo: PedidoAlteracao, chave?: string): Resultado {
+  return executarAcao(deps, roteiroId, chave, "solicitar_alteracao", corpo, (roteiro, dados, agora) => {
+    const prazo = verificarPrazo(dados.prazo, agora);
+    exigirVersaoAtual(dados.versao ?? undefined, roteiro.versao_atual);
 
     const quando = agora.toISOString();
     repo.inserirPedido(deps.db, {
       id: randomUUID(),
       roteiro_id: roteiroId,
       versao: roteiro.versao_atual,
-      motivo,
+      motivo: dados.motivo,
       prazo: prazo.texto,
       prazo_fim: prazo.fim.toISOString(),
       criado_em: quando,
@@ -176,20 +186,15 @@ export function solicitarAlteracao(deps: Deps, roteiroId: string, corpo: Corpo, 
       roteiro_id: roteiroId,
       versao: roteiro.versao_atual,
       tipo: "alteracao_solicitada",
-      dados: { motivo, prazo: prazo.texto, prazo_fim: prazo.fim.toISOString() },
+      dados: { motivo: dados.motivo, prazo: prazo.texto, prazo_fim: prazo.fim.toISOString() },
       ocorrido_em: quando,
     });
     return { status: 201, corpo: montarRoteiro(deps.db, exigirRoteiro(deps.db, roteiroId), agora) };
   });
 }
 
-export function enviarNovaVersao(deps: Deps, roteiroId: string, corpo: Corpo, chave?: string): Resultado {
-  return comIdempotencia(deps, roteiroId, chave, "enviar_nova_versao", corpo, () => {
-    const agora = deps.clock.now();
-    const roteiro = exigirRoteiro(deps.db, roteiroId);
-    const conteudo = validarTextoObrigatorio(corpo.conteudo, "conteudo");
-    exigirAcao(roteiro.estado, "enviar_nova_versao");
-
+export function enviarNovaVersao(deps: Deps, roteiroId: string, corpo: NovaVersao, chave?: string): Resultado {
+  return executarAcao(deps, roteiroId, chave, "enviar_nova_versao", corpo, (roteiro, dados, agora) => {
     const pedido = repo.buscarPedidoDaVersao(deps.db, roteiroId, roteiro.versao_atual);
     // Reenvio depois do prazo é aceito, mas fica marcado: a marca decide o que fazer com o atraso.
     const aposPrazo = pedido ? prazoVencido(new Date(pedido.prazo_fim), agora) : false;
@@ -198,7 +203,7 @@ export function enviarNovaVersao(deps: Deps, roteiroId: string, corpo: Corpo, ch
     repo.inserirVersao(deps.db, {
       roteiro_id: roteiroId,
       numero,
-      conteudo,
+      conteudo: dados.conteudo,
       estado: "aguardando_revisao",
       enviada_em: quando,
       enviada_apos_prazo: aposPrazo ? 1 : 0,
@@ -221,13 +226,9 @@ export function enviarNovaVersao(deps: Deps, roteiroId: string, corpo: Corpo, ch
   });
 }
 
-export function aprovar(deps: Deps, roteiroId: string, corpo: Corpo, chave?: string): Resultado {
-  return comIdempotencia(deps, roteiroId, chave, "aprovar", corpo, () => {
-    const agora = deps.clock.now();
-    const roteiro = exigirRoteiro(deps.db, roteiroId);
-    const versao = validarVersaoOpcional(corpo.versao);
-    exigirAcao(roteiro.estado, "aprovar");
-    exigirVersaoAtual(versao, roteiro.versao_atual);
+export function aprovar(deps: Deps, roteiroId: string, corpo: Aprovacao, chave?: string): Resultado {
+  return executarAcao(deps, roteiroId, chave, "aprovar", corpo, (roteiro, dados, agora) => {
+    exigirVersaoAtual(dados.versao ?? undefined, roteiro.versao_atual);
 
     const quando = agora.toISOString();
     repo.mudarEstadoVersao(deps.db, roteiroId, roteiro.versao_atual, "aprovada");
@@ -252,12 +253,11 @@ export function obterRoteiro(deps: Deps, roteiroId: string) {
   return montarRoteiro(deps.db, exigirRoteiro(deps.db, roteiroId), deps.clock.now());
 }
 
-export function obterVersao(deps: Deps, roteiroId: string, numeroTexto: string) {
+export function obterVersao(deps: Deps, roteiroId: string, numero: number) {
   const roteiro = exigirRoteiro(deps.db, roteiroId);
-  const numero = Number(numeroTexto);
-  const versao = Number.isInteger(numero) ? repo.buscarVersao(deps.db, roteiroId, numero) : undefined;
+  const versao = repo.buscarVersao(deps.db, roteiroId, numero);
   if (!versao) {
-    throw new ErroApi(404, "VERSAO_NAO_ENCONTRADA", `Versão ${numeroTexto} não encontrada no roteiro ${roteiroId}.`);
+    throw new ErroApi(404, "VERSAO_NAO_ENCONTRADA", `Versão ${numero} não encontrada no roteiro ${roteiroId}.`);
   }
   const visao = montarRoteiro(deps.db, roteiro, deps.clock.now());
   return visao.versoes.find((v) => v.numero === versao.numero)!;

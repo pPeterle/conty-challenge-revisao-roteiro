@@ -1,10 +1,11 @@
-// Máquina de estados do roteiro e validação de entrada. Funções puras.
+// Máquina de estados do roteiro e regras que dependem do relógio. Funções puras.
+// A forma da entrada (tipos, tamanhos, formato da data) é validada em schemas.ts.
 import { ErroApi } from "./erros.ts";
 import {
   FUSO_MARCA,
+  dataCivilNoFuso,
   fimDoDia,
   formatarDataCivil,
-  parseDataCivil,
   prazoVencido,
   type DataCivil,
 } from "./prazo.ts";
@@ -54,6 +55,14 @@ export function exigirVersaoAtual(versaoInformada: number | undefined, versaoAtu
   }
 }
 
+export const LIMITES = {
+  titulo: 200,
+  conteudo: 50_000,
+  motivo: 2_000,
+  /** O prazo pode ficar no máximo um ano à frente da data de hoje no fuso da marca. */
+  anosDePrazo: 1,
+} as const;
+
 export interface PrazoValidado {
   data: DataCivil;
   texto: string;
@@ -61,53 +70,21 @@ export interface PrazoValidado {
 }
 
 /** O prazo é um dia no fuso da marca e vale até o último milissegundo desse dia. */
-export function validarPrazo(prazo: unknown, agora: Date): PrazoValidado {
-  if (prazo === undefined || prazo === null || prazo === "") {
-    throw new ErroApi(400, "PRAZO_OBRIGATORIO", "Informe o prazo (data no formato AAAA-MM-DD).");
-  }
-  if (typeof prazo !== "string") {
-    throw new ErroApi(400, "PRAZO_INVALIDO", "O prazo precisa ser uma data no formato AAAA-MM-DD.");
-  }
-  const data = parseDataCivil(prazo);
-  if (!data) {
-    throw new ErroApi(400, "PRAZO_INVALIDO", "O prazo precisa ser uma data válida no formato AAAA-MM-DD.");
-  }
+export function verificarPrazo(data: DataCivil, agora: Date): PrazoValidado {
+  const texto = formatarDataCivil(data);
   const fim = fimDoDia(data, FUSO_MARCA);
   if (prazoVencido(fim, agora)) {
+    throw new ErroApi(422, "PRAZO_VENCIDO", `O prazo ${texto} já passou no fuso da marca (${FUSO_MARCA}).`);
+  }
+  const hoje = dataCivilNoFuso(agora, FUSO_MARCA);
+  const limite = formatarDataCivil({ ...hoje, ano: hoje.ano + LIMITES.anosDePrazo });
+  // Datas AAAA-MM-DD comparam bem como texto.
+  if (texto > limite) {
     throw new ErroApi(
-      422,
-      "PRAZO_VENCIDO",
-      `O prazo ${prazo} já passou no fuso da marca (${FUSO_MARCA}).`,
+      400,
+      "PRAZO_MUITO_DISTANTE",
+      `O prazo pode ser no máximo ${LIMITES.anosDePrazo} ano à frente (até ${limite}).`,
     );
   }
-  return { data, texto: formatarDataCivil(data), fim };
-}
-
-export function validarMotivo(motivo: unknown): string {
-  if (motivo === undefined || motivo === null) {
-    throw new ErroApi(400, "MOTIVO_OBRIGATORIO", "Informe o motivo do pedido de alteração.");
-  }
-  if (typeof motivo !== "string") {
-    throw new ErroApi(400, "MOTIVO_INVALIDO", "O motivo precisa ser um texto.");
-  }
-  const limpo = motivo.trim();
-  if (limpo === "") {
-    throw new ErroApi(400, "MOTIVO_OBRIGATORIO", "Informe o motivo do pedido de alteração.");
-  }
-  return limpo;
-}
-
-export function validarTextoObrigatorio(valor: unknown, campo: string): string {
-  if (typeof valor !== "string" || valor.trim() === "") {
-    throw new ErroApi(400, "CAMPO_OBRIGATORIO", `O campo "${campo}" é obrigatório e precisa ser um texto.`);
-  }
-  return valor;
-}
-
-export function validarVersaoOpcional(valor: unknown): number | undefined {
-  if (valor === undefined || valor === null) return undefined;
-  if (typeof valor !== "number" || !Number.isInteger(valor) || valor < 1) {
-    throw new ErroApi(400, "VERSAO_INVALIDA", 'O campo "versao" precisa ser um inteiro maior que zero.');
-  }
-  return valor;
+  return { data, texto, fim };
 }
