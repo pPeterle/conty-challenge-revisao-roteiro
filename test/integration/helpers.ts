@@ -1,6 +1,7 @@
 import { createApp } from "../../src/app.ts";
 import { ControlledClock } from "../../src/clock.ts";
 import { openDatabase } from "../../src/db.ts";
+import type { Logger } from "../../src/logger.ts";
 
 /** Ator certo para cada ação, para os testes que não estão testando papéis. */
 export function atorPadrao(metodo: string, caminho: string): Record<string, string> {
@@ -9,10 +10,10 @@ export function atorPadrao(metodo: string, caminho: string): Record<string, stri
   return { "X-Ator": "marca" };
 }
 
-export function montar(inicio = "2026-03-10T15:00:00.000Z") {
+export function montar(inicio = "2026-03-10T15:00:00.000Z", logger?: Logger) {
   const db = openDatabase(":memory:");
   const clock = new ControlledClock(inicio);
-  const app = createApp({ db, clock });
+  const app = createApp({ db, clock, logger });
 
   async function chamar(metodo: string, caminho: string, corpo?: unknown, headers: Record<string, string> = {}) {
     const comAtor = { ...atorPadrao(metodo, caminho), ...headers };

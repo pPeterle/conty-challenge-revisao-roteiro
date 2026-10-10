@@ -40,7 +40,7 @@ npm run typecheck
 npm run load         # precisa de Docker; sobe a API na porta 3101 com banco temporário
 ```
 
-`PORT` e `DB_PATH` mudam a porta e o arquivo do banco.
+`PORT` e `DB_PATH` mudam a porta e o arquivo do banco. Os logs saem em JSON pelo pino, com transporte em worker thread (`pino/file` no stdout), e `LOG_LEVEL` muda o nível (padrão `info`; nos testes o logger é silencioso).
 
 ## Estados
 
@@ -96,7 +96,7 @@ Erros vêm como `{ "error": { "code", "message", "details"? } }`. A ordem das ch
 | 422 | `PRAZO_VENCIDO` | pedido com prazo que já terminou no fuso da marca |
 | 422 | `CHAVE_IDEMPOTENCIA_REUTILIZADA` | mesma `Idempotency-Key` com outra operação ou outro corpo |
 
-Validação e limites: todo corpo, parâmetro de rota, `X-Ator` e `Idempotency-Key` passa por um schema zod (`src/schemas.ts`). Campos desconhecidos são ignorados e textos são aparados. Recebem 400 os casos de JSON malformado, corpo que não é objeto, `Content-Type` diferente de JSON com corpo, texto vazio ou só com caracteres invisíveis, texto com caracteres de controle como NUL (`CARACTERE_INVALIDO`; tab e quebras de linha passam), `titulo` com mais de 200 caracteres, `conteudo` com mais de 50 mil, `motivo` com mais de 2 mil, `versao` que não é inteiro positivo, número de versão na URL fora de `^[1-9]\d*$` e prazo com ano abaixo de 100 ou acima de 9999 (só o formato limita a data; não há teto de negócio). Corpo acima de 1 MB recebe 413, e rota, método ou id inexistente recebe 404 em JSON. Erro inesperado vira 500 genérico, sem stack trace. Os casos estão em `test/integration/payloads-invalidos.test.ts`.
+Validação e limites: todo corpo, parâmetro de rota, `X-Ator` e `Idempotency-Key` passa por um schema zod (`src/schemas.ts`). Campos desconhecidos são ignorados e textos são aparados. Recebem 400 os casos de JSON malformado, corpo que não é objeto, `Content-Type` diferente de JSON com corpo, texto vazio ou só com caracteres invisíveis, texto com caracteres de controle como NUL (`CARACTERE_INVALIDO`; tab e quebras de linha passam), `titulo` com mais de 200 caracteres, `conteudo` com mais de 50 mil, `motivo` com mais de 2 mil, `versao` que não é inteiro positivo, número de versão na URL fora de `^[1-9]\d*$` e prazo com ano abaixo de 100 ou acima de 9999 (só o formato limita a data; não há teto de negócio). Corpo acima de 1 MB recebe 413, e rota, método ou id inexistente recebe 404 em JSON. Erro inesperado vira 500 genérico, sem stack trace, e o erro completo vai para o log. Os casos estão em `test/integration/payloads-invalidos.test.ts`.
 
 ## Regra do prazo
 
@@ -158,7 +158,7 @@ curl -s localhost:3000/roteiros/$ID/historico
 
 Revisão de roteiro tem poucas ações por roteiro, espalhadas ao longo de dias. Um processo Node com sqlite serializando as escritas dá conta disso com folga, e as garantias ficam em restrições do banco que eu consigo testar: chave primária no número da versão, um pedido vigente por versão e um índice único parcial que permite uma aprovação por roteiro. Cada ação roda inteira numa transação `BEGIN IMMEDIATE`. Não usei Redis nem lock distribuído porque nenhuma ação tem efeito fora do banco. Detalhes de idempotência, concorrência e do caminho para várias instâncias estão em [docs/concorrencia.md](docs/concorrencia.md).
 
-Teste de carga: 100 usuários virtuais por 20 s disputando 10 roteiros, com 10% de payloads inválidos (incluindo papel errado e `X-Ator` ausente). Na última execução, nesta máquina: p95 de 31,2 ms, 4569 req/s, 0% de falha, 100% dos checks e invariantes conferidas no banco, inclusive o ator de cada evento. A máquina tinha outros processos rodando (load average perto de 7). O limite do k6 para o p95 é 500 ms, folgado de propósito para máquinas mais lentas; checks, taxa de erro e invariantes continuam rígidos. Cenário e saída em [docs/carga.md](docs/carga.md).
+Teste de carga: 100 usuários virtuais por 20 s disputando 10 roteiros, com 10% de payloads inválidos (incluindo papel errado e `X-Ator` ausente). Na última execução, nesta máquina: p95 de 34,9 ms, 4231 req/s, 0% de falha, 100% dos checks e invariantes conferidas no banco, inclusive o ator de cada evento. A máquina tinha outros processos rodando (load average perto de 5). O limite do k6 para o p95 é 500 ms, folgado de propósito para máquinas mais lentas; checks, taxa de erro e invariantes continuam rígidos. Cenário e saída em [docs/carga.md](docs/carga.md).
 
 ## O que ficou de fora
 

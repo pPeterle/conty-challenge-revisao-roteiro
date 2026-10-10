@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { atorPadrao, montar } from "./helpers.ts";
 
@@ -212,20 +213,21 @@ describe("rotas, ids e métodos", () => {
     },
   );
 
-  it("erro inesperado vira 500 JSON genérico, sem stack trace", async () => {
-    const { app, db, criarRoteiro } = montar();
+  it("erro inesperado vira 500 JSON genérico, sem stack trace, e o erro vai para o logger", async () => {
+    const linhas: string[] = [];
+    const logger = pino({ level: "info" }, { write: (linha: string) => void linhas.push(linha) });
+    const { app, db, criarRoteiro } = montar(undefined, logger);
     const id = await criarRoteiro();
     db.exec("DROP TABLE eventos");
-    const original = console.error;
-    console.error = () => {};
-    try {
-      const r = await app.request(`/roteiros/${id}/historico`);
-      expect(r.status).toBe(500);
-      const texto = await r.text();
-      expect(JSON.parse(texto)).toEqual({ error: { code: "ERRO_INTERNO", message: "Erro inesperado no servidor." } });
-      expect(texto).not.toMatch(/at |sqlite|eventos/);
-    } finally {
-      console.error = original;
-    }
+    const r = await app.request(`/roteiros/${id}/historico`);
+    expect(r.status).toBe(500);
+    const texto = await r.text();
+    expect(JSON.parse(texto)).toEqual({ error: { code: "ERRO_INTERNO", message: "Erro inesperado no servidor." } });
+    expect(texto).not.toMatch(/at |sqlite|eventos/);
+    expect(linhas).toHaveLength(1);
+    const registro = JSON.parse(linhas[0]!);
+    expect(registro).toMatchObject({ level: 50, msg: "erro inesperado", method: "GET", path: `/roteiros/${id}/historico` });
+    expect(registro.err.message).toMatch(/eventos/);
   });
+
 });
